@@ -72,10 +72,10 @@ public class LanternaLunaTui implements LunaTui {
         for (InternalMessage message : messages) {
             changed |= renderMessage(writer, message);
         }
-        if (changed) {
+        if (changed || status.toolName() != null) {
             printStatus(writer, status);
         }
-        if (!"responding".equals(status.state())) {
+        if (!"responding".equals(status.state()) && !"tool_running".equals(status.state())) {
             drawPrompt(writer);
         }
         writer.flush();
@@ -144,6 +144,16 @@ public class LanternaLunaTui implements LunaTui {
             return false;
         }
 
+        if (message.role() == MessageRole.TOOL) {
+            if (startedMessages.add(message.id())) {
+                clearPromptLine(writer);
+                writer.println("Tool [complete] " + message.content());
+                promptVisible = false;
+                return true;
+            }
+            return false;
+        }
+
         if (message.role() != MessageRole.ASSISTANT) {
             return false;
         }
@@ -199,6 +209,10 @@ public class LanternaLunaTui implements LunaTui {
                 + " model=" + status.model()
                 + " tokens=" + inputTokens + "/" + outputTokens
                 + " state=" + status.state());
+        if (status.toolName() != null) {
+            writer.println("[tool] name=" + status.toolName() + " state=" + status.state()
+                    + (status.toolSummary() == null ? "" : " summary=" + status.toolSummary()));
+        }
     }
 
     private void drawPrompt(PrintWriter writer) {

@@ -28,7 +28,36 @@ public class DefaultConversationManager implements ConversationManager {
         try {
             String id = newId();
             MessageStatus status = role == MessageRole.ASSISTANT ? MessageStatus.STREAMING : MessageStatus.COMPLETE;
-            messages.add(new MutableMessage(id, role, status, Instant.now(clock), TokenUsage.unknown(), safe(content), null));
+            messages.add(new MutableMessage(id, role, status, Instant.now(clock), TokenUsage.unknown(), safe(content), blocksFor(role, content), null));
+            return id;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public String addAssistantMessage(List<ContentBlock> blocks) {
+        lock.writeLock().lock();
+        try {
+            String id = newId();
+            List<ContentBlock> safeBlocks = blocks == null ? List.of() : List.copyOf(blocks);
+            messages.add(new MutableMessage(id, MessageRole.ASSISTANT, MessageStatus.COMPLETE, Instant.now(clock), TokenUsage.unknown(), textOf(safeBlocks), new ArrayList<>(safeBlocks), null));
+            return id;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public String addUserToolResultMessage(List<ContentBlock.ToolResultBlock> results) {
+        lock.writeLock().lock();
+        try {
+            List<ContentBlock> blocks = new ArrayList<>();
+            if (results != null) {
+                blocks.addAll(results);
+            }
+            String id = newId();
+            messages.add(new MutableMessage(id, MessageRole.TOOL, MessageStatus.COMPLETE, Instant.now(clock), TokenUsage.unknown(), textOf(blocks), blocks, null));
             return id;
         } finally {
             lock.writeLock().unlock();
@@ -40,7 +69,7 @@ public class DefaultConversationManager implements ConversationManager {
         lock.writeLock().lock();
         try {
             String id = newId();
-            messages.add(new MutableMessage(id, MessageRole.ASSISTANT, MessageStatus.STREAMING, Instant.now(clock), TokenUsage.unknown(), "", null));
+            messages.add(new MutableMessage(id, MessageRole.ASSISTANT, MessageStatus.STREAMING, Instant.now(clock), TokenUsage.unknown(), "", new ArrayList<>(), null));
             return id;
         } finally {
             lock.writeLock().unlock();
@@ -59,6 +88,25 @@ public class DefaultConversationManager implements ConversationManager {
                 throw new IllegalStateException("只能追加正在流式生成的 assistant 消息");
             }
             message.content += delta;
+            if (!message.blocks.isEmpty() && message.blocks.get(message.blocks.size() - 1) instanceof ContentBlock.Text text) {
+                message.blocks.set(message.blocks.size() - 1, new ContentBlock.Text(text.text() + delta));
+            } else {
+                message.blocks.add(new ContentBlock.Text(delta));
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public void appendToolUse(String messageId, ContentBlock.ToolUseBlock toolUse) {
+        lock.writeLock().lock();
+        try {
+            MutableMessage message = find(messageId);
+            if (message.role != MessageRole.ASSISTANT || message.status != MessageStatus.STREAMING) {
+                throw new IllegalStateException("只能向正在流式生成的 assistant 消息追加工具调用");
+            }
+            message.blocks.add(toolUse);
         } finally {
             lock.writeLock().unlock();
         }
@@ -108,10 +156,13 @@ public class DefaultConversationManager implements ConversationManager {
                 if (message.status == MessageStatus.ERROR) {
                     continue;
                 }
-                if (message.role != MessageRole.USER && message.role != MessageRole.ASSISTANT) {
+                if (message.role == MessageRole.TOOL && normalizedBlocks(message).stream().noneMatch(ContentBlock.ToolResultBlock.class::isInstance)) {
                     continue;
                 }
-                if (message.content.isBlank()) {
+                if (message.role != MessageRole.USER && message.role != MessageRole.ASSISTANT && message.role != MessageRole.TOOL) {
+                    continue;
+                }
+                if (normalizedBlocks(message).isEmpty() && message.content.isBlank()) {
                     continue;
                 }
                 String role = apiRole(message.role);
@@ -119,14 +170,14 @@ public class DefaultConversationManager implements ConversationManager {
                     if (!role.equals("user")) {
                         continue;
                     }
-                    result.add(new ApiMessage(role, message.content));
+                    result.add(new ApiMessage(role, normalizedBlocks(message)));
                     continue;
                 }
                 ApiMessage last = result.get(result.size() - 1);
-                if (last.role().equals(role)) {
-                    result.set(result.size() - 1, new ApiMessage(role, last.content() + "\n\n" + message.content));
+                if (last.role().equals(role) && canMerge(last) && canMerge(message)) {
+                    result.set(result.size() - 1, new ApiMessage(role, last.textContent() + "\n\n" + message.content));
                 } else {
-                    result.add(new ApiMessage(role, message.content));
+                    result.add(new ApiMessage(role, normalizedBlocks(message)));
                 }
             }
             return List.copyOf(result);
@@ -150,11 +201,50 @@ public class DefaultConversationManager implements ConversationManager {
         return value == null ? "" : value;
     }
 
+    private List<ContentBlock> blocksFor(MessageRole role, String content) {
+        String safeContent = safe(content);
+        if ((role == MessageRole.USER || role == MessageRole.ASSISTANT) && !safeContent.isBlank()) {
+            return new ArrayList<>(List.of(new ContentBlock.Text(safeContent)));
+        }
+        return new ArrayList<>();
+    }
+
+    private List<ContentBlock> normalizedBlocks(MutableMessage message) {
+        if (!message.blocks.isEmpty()) {
+            return List.copyOf(message.blocks);
+        }
+        return message.content.isBlank() ? List.of() : List.of(new ContentBlock.Text(message.content));
+    }
+
+    private boolean canMerge(ApiMessage message) {
+        return message.content().stream().allMatch(ContentBlock.Text.class::isInstance);
+    }
+
+    private boolean canMerge(MutableMessage message) {
+        return normalizedBlocks(message).stream().allMatch(ContentBlock.Text.class::isInstance);
+    }
+
+    private String textOf(List<ContentBlock> blocks) {
+        StringBuilder result = new StringBuilder();
+        for (ContentBlock block : blocks) {
+            if (block instanceof ContentBlock.Text text) {
+                result.append(text.text());
+            } else if (block instanceof ContentBlock.ToolResultBlock toolResult) {
+                if (!result.isEmpty()) {
+                    result.append('\n');
+                }
+                result.append(toolResult.content());
+            }
+        }
+        return result.toString();
+    }
+
     private String apiRole(MessageRole role) {
         return switch (role) {
             case USER -> "user";
             case ASSISTANT -> "assistant";
-            case SYSTEM, TOOL -> throw new IllegalArgumentException("不支持的 API 角色: " + role);
+            case TOOL -> "user";
+            case SYSTEM -> throw new IllegalArgumentException("不支持的 API 角色: " + role);
         };
     }
 
@@ -165,15 +255,17 @@ public class DefaultConversationManager implements ConversationManager {
         private final Instant timestamp;
         private TokenUsage usage;
         private String content;
+        private final List<ContentBlock> blocks;
         private String errorSummary;
 
-        private MutableMessage(String id, MessageRole role, MessageStatus status, Instant timestamp, TokenUsage usage, String content, String errorSummary) {
+        private MutableMessage(String id, MessageRole role, MessageStatus status, Instant timestamp, TokenUsage usage, String content, List<ContentBlock> blocks, String errorSummary) {
             this.id = id;
             this.role = role;
             this.status = status;
             this.timestamp = timestamp;
             this.usage = usage;
             this.content = content;
+            this.blocks = blocks;
             this.errorSummary = errorSummary;
         }
 

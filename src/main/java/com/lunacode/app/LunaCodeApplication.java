@@ -7,9 +7,21 @@ import com.lunacode.conversation.DefaultConversationManager;
 import com.lunacode.orchestrator.DefaultChatOrchestrator;
 import com.lunacode.provider.ChatProvider;
 import com.lunacode.provider.ChatProviderFactory;
+import com.lunacode.tool.BashTool;
+import com.lunacode.tool.DefaultToolExecutor;
+import com.lunacode.tool.DefaultToolRegistry;
+import com.lunacode.tool.EditFileTool;
+import com.lunacode.tool.GlobTool;
+import com.lunacode.tool.GrepTool;
+import com.lunacode.tool.ReadFileTool;
+import com.lunacode.tool.SensitiveValueMasker;
+import com.lunacode.tool.ToolExecutionContext;
+import com.lunacode.tool.WorkspacePathResolver;
+import com.lunacode.tool.WriteFileTool;
 import com.lunacode.tui.LanternaLunaTui;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class LunaCodeApplication {
@@ -32,11 +44,27 @@ public class LunaCodeApplication {
             return;
         }
 
+        Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
+        WorkspacePathResolver resolver = new WorkspacePathResolver(workspaceRoot);
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        registry.register(new ReadFileTool(resolver));
+        registry.register(new WriteFileTool(resolver));
+        registry.register(new EditFileTool(resolver));
+        registry.register(new BashTool());
+        registry.register(new GlobTool(resolver));
+        registry.register(new GrepTool(resolver));
+        SensitiveValueMasker masker = new SensitiveValueMasker();
+        masker.add(config.apiKey());
+        ToolExecutionContext toolContext = new ToolExecutionContext(workspaceRoot, Duration.ofSeconds(30), 20_000, masker);
+        DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);
+
         AtomicReference<LanternaLunaTui> tuiRef = new AtomicReference<>();
         DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(
                 conversationManager,
                 provider,
                 config,
+                registry,
+                toolExecutor,
                 () -> {
                     LanternaLunaTui tui = tuiRef.get();
                     if (tui != null) {

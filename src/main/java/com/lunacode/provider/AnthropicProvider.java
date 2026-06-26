@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ApiMessage;
+import com.lunacode.conversation.ContentBlock;
 import com.lunacode.stream.AnthropicStreamMapper;
 import com.lunacode.stream.SseParser;
 import com.lunacode.stream.StreamEvent;
@@ -30,12 +31,17 @@ public class AnthropicProvider implements ChatProvider {
 
     @Override
     public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config) {
+        return streamChat(messages, config, mapper.createArrayNode());
+    }
+
+    @Override
+    public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools) {
         try {
             HttpRequest request = HttpRequest.newBuilder(endpoint(config.baseUrl(), "/v1/messages"))
                     .header("x-api-key", config.apiKey())
                     .header("anthropic-version", ANTHROPIC_VERSION)
                     .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages, config)))
+                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages, config, enabledTools)))
                     .build();
             HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -53,6 +59,10 @@ public class AnthropicProvider implements ChatProvider {
     }
 
     String buildRequestBody(List<ApiMessage> messages, ProviderConfig config) throws Exception {
+        return buildRequestBody(messages, config, mapper.createArrayNode());
+    }
+
+    String buildRequestBody(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools) throws Exception {
         ObjectNode root = mapper.createObjectNode();
         root.put("model", config.model());
         root.put("stream", true);
@@ -61,7 +71,10 @@ public class AnthropicProvider implements ChatProvider {
         for (ApiMessage message : messages) {
             ObjectNode item = messageArray.addObject();
             item.put("role", message.role());
-            item.put("content", message.content());
+            writeContent(item, message);
+        }
+        if (enabledTools != null && !enabledTools.isEmpty()) {
+            root.set("tools", enabledTools);
         }
         if (config.thinking().enabled()) {
             ObjectNode thinking = root.putObject("thinking");
@@ -71,6 +84,33 @@ public class AnthropicProvider implements ChatProvider {
             }
         }
         return mapper.writeValueAsString(root);
+    }
+
+    private void writeContent(ObjectNode item, ApiMessage message) {
+        if (message.content().size() == 1 && message.content().get(0) instanceof ContentBlock.Text text) {
+            item.put("content", text.text());
+            return;
+        }
+        ArrayNode content = item.putArray("content");
+        for (ContentBlock block : message.content()) {
+            if (block instanceof ContentBlock.Text text) {
+                ObjectNode node = content.addObject();
+                node.put("type", "text");
+                node.put("text", text.text());
+            } else if (block instanceof ContentBlock.ToolUseBlock toolUse) {
+                ObjectNode node = content.addObject();
+                node.put("type", "tool_use");
+                node.put("id", toolUse.id());
+                node.put("name", toolUse.name());
+                node.set("input", toolUse.input());
+            } else if (block instanceof ContentBlock.ToolResultBlock toolResult) {
+                ObjectNode node = content.addObject();
+                node.put("type", "tool_result");
+                node.put("tool_use_id", toolResult.toolUseId());
+                node.put("content", toolResult.content());
+                node.put("is_error", toolResult.isError());
+            }
+        }
     }
 
     private URI endpoint(URI baseUrl, String suffix) {

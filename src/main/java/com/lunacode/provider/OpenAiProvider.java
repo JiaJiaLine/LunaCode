@@ -58,7 +58,7 @@ public class OpenAiProvider implements ChatProvider {
         for (ApiMessage message : messages) {
             ObjectNode item = messageArray.addObject();
             item.put("role", message.role());
-            item.put("content", message.content());
+            item.put("content", message.textContent());
         }
         return mapper.writeValueAsString(root);
     }
