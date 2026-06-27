@@ -2,7 +2,9 @@ package com.lunacode.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 
@@ -10,6 +12,9 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BashToolTest {
     private final ObjectMapper mapper = new ObjectMapper();
+
+    @TempDir
+    Path tempDir;
 
     @Test
     void commandSuccessNonZeroAndTimeoutAreStructured() {
@@ -36,8 +41,26 @@ class BashToolTest {
         assertFalse(result.content().contains("SECRET_TOKEN"));
     }
 
+    @Test
+    void redirectionCreatesFileInWorkspace() throws Exception {
+        BashTool tool = new BashTool();
+        String command = "echo Hello World > tool-output.txt 2>&1";
+
+        ToolResult result = tool.execute(context(tempDir, Duration.ofSeconds(3), new SensitiveValueMasker()),
+                mapper.createObjectNode().put("command", command));
+
+        assertFalse(result.isError(), result.content());
+        Path output = tempDir.resolve("tool-output.txt");
+        assertTrue(Files.exists(output), "redirection should create a file in the workspace");
+        assertTrue(Files.readString(output).contains("Hello World"));
+    }
+
     private ToolExecutionContext context(Duration timeout, SensitiveValueMasker masker) {
-        return new ToolExecutionContext(Path.of(".").toAbsolutePath().normalize(), timeout, 10_000, masker);
+        return context(Path.of(".").toAbsolutePath().normalize(), timeout, masker);
+    }
+
+    private ToolExecutionContext context(Path workspaceRoot, Duration timeout, SensitiveValueMasker masker) {
+        return new ToolExecutionContext(workspaceRoot, timeout, 10_000, masker);
     }
 
     private String failingCommand() {

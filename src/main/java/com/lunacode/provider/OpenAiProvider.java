@@ -1,5 +1,6 @@
 package com.lunacode.provider;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -27,16 +28,21 @@ public class OpenAiProvider implements ChatProvider {
 
     @Override
     public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config) {
+        return streamChat(messages, config, mapper.createArrayNode());
+    }
+
+    @Override
+    public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools) {
         try {
             HttpRequest request = HttpRequest.newBuilder(endpoint(config.baseUrl(), "/v1/chat/completions"))
                     .header("authorization", "Bearer " + config.apiKey())
                     .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages, config)))
+                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages, config, enabledTools)))
                     .build();
             HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 response.body().close();
-                return Stream.of(new StreamEvent.Error("OpenAI 请求失败，HTTP 状态码: " + response.statusCode(), null));
+                return Stream.of(new StreamEvent.Error("OpenAI request failed, HTTP status: " + response.statusCode(), null));
             }
             SseParser parser = new SseParser();
             return response.body()
@@ -44,11 +50,15 @@ public class OpenAiProvider implements ChatProvider {
                     .flatMap(event -> streamMapper.map(event).stream())
                     .onClose(response.body()::close);
         } catch (Exception e) {
-            return Stream.of(new StreamEvent.Error("OpenAI 请求失败", e));
+            return Stream.of(new StreamEvent.Error("OpenAI request failed", e));
         }
     }
 
     String buildRequestBody(List<ApiMessage> messages, ProviderConfig config) throws Exception {
+        return buildRequestBody(messages, config, mapper.createArrayNode());
+    }
+
+    String buildRequestBody(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools) throws Exception {
         ObjectNode root = mapper.createObjectNode();
         root.put("model", config.model());
         root.put("stream", true);
@@ -60,7 +70,25 @@ public class OpenAiProvider implements ChatProvider {
             item.put("role", message.role());
             item.put("content", message.textContent());
         }
+        if (enabledTools != null && !enabledTools.isEmpty()) {
+            root.set("tools", toOpenAiTools(enabledTools));
+            root.put("tool_choice", "auto");
+        }
         return mapper.writeValueAsString(root);
+    }
+
+    private ArrayNode toOpenAiTools(ArrayNode enabledTools) {
+        ArrayNode tools = mapper.createArrayNode();
+        for (JsonNode tool : enabledTools) {
+            ObjectNode item = tools.addObject();
+            item.put("type", "function");
+            ObjectNode function = item.putObject("function");
+            function.put("name", tool.path("name").asText());
+            function.put("description", tool.path("description").asText());
+            JsonNode schema = tool.path("input_schema");
+            function.set("parameters", schema.isMissingNode() || schema.isNull() ? mapper.createObjectNode().put("type", "object") : schema);
+        }
+        return tools;
     }
 
     private URI endpoint(URI baseUrl, String suffix) {

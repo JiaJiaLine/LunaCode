@@ -2,6 +2,7 @@ package com.lunacode.provider;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.config.ThinkingConfig;
 import com.lunacode.conversation.ApiMessage;
@@ -57,10 +58,39 @@ class ProviderRequestBodyTest {
         assertFalse(body.contains("secret-key"));
     }
 
+    @Test
+    void openAiBodyContainsEnabledToolsAsFunctions() throws Exception {
+        ProviderConfig config = new ProviderConfig(
+                "openai",
+                "gpt-test",
+                URI.create("https://api.openai.com"),
+                "secret-key",
+                ThinkingConfig.disabled()
+        );
+        ArrayNode enabledTools = mapper.createArrayNode();
+        enabledTools.addObject()
+                .put("name", "WriteFile")
+                .put("description", "write a file")
+                .set("input_schema", mapper.createObjectNode()
+                        .put("type", "object")
+                        .set("properties", mapper.createObjectNode()
+                                .set("path", mapper.createObjectNode().put("type", "string"))));
+
+        String body = new OpenAiProvider(HttpClient.newHttpClient()).buildRequestBody(messages(), config, enabledTools);
+        JsonNode root = mapper.readTree(body);
+
+        assertEquals("auto", root.path("tool_choice").asText());
+        assertEquals("function", root.path("tools").get(0).path("type").asText());
+        JsonNode function = root.path("tools").get(0).path("function");
+        assertEquals("WriteFile", function.path("name").asText());
+        assertEquals("write a file", function.path("description").asText());
+        assertEquals("object", function.path("parameters").path("type").asText());
+    }
+
     private List<ApiMessage> messages() {
         return List.of(
-                new ApiMessage("user", "你好"),
-                new ApiMessage("assistant", "你好，我是 LunaCode")
+                new ApiMessage("user", "hello"),
+                new ApiMessage("assistant", "hello, I am LunaCode")
         );
     }
 }

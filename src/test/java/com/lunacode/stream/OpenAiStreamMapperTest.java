@@ -11,16 +11,16 @@ class OpenAiStreamMapperTest {
     void mapsOpenAiChunksToUnifiedEvents() {
         OpenAiStreamMapper mapper = new OpenAiStreamMapper();
 
-        List<StreamEvent> first = mapper.map(new SseEvent("message", "{\"choices\":[{\"delta\":{\"content\":\"你\"},\"finish_reason\":null}]}"));
+        List<StreamEvent> first = mapper.map(new SseEvent("message", "{\"choices\":[{\"delta\":{\"content\":\"he\"},\"finish_reason\":null}]}"));
         assertEquals(3, first.size());
         assertInstanceOf(StreamEvent.MessageStart.class, first.get(0));
         assertInstanceOf(StreamEvent.ContentBlockStart.class, first.get(1));
         StreamEvent.ContentDelta firstDelta = (StreamEvent.ContentDelta) first.get(2);
-        assertEquals("你", firstDelta.text());
+        assertEquals("he", firstDelta.text());
 
-        List<StreamEvent> second = mapper.map(new SseEvent("message", "{\"choices\":[{\"delta\":{\"content\":\"好\"},\"finish_reason\":null}]}"));
+        List<StreamEvent> second = mapper.map(new SseEvent("message", "{\"choices\":[{\"delta\":{\"content\":\"llo\"},\"finish_reason\":null}]}"));
         assertEquals(1, second.size());
-        assertEquals("好", ((StreamEvent.ContentDelta) second.get(0)).text());
+        assertEquals("llo", ((StreamEvent.ContentDelta) second.get(0)).text());
 
         List<StreamEvent> usage = mapper.map(new SseEvent("message", "{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":3,\"total_tokens\":5}}"));
         assertEquals(2, usage.size());
@@ -35,6 +35,25 @@ class OpenAiStreamMapperTest {
         assertInstanceOf(StreamEvent.ContentBlockStop.class, done.get(0));
         assertInstanceOf(StreamEvent.MessageStop.class, done.get(1));
         assertEquals(5, ((StreamEvent.MessageStop) done.get(1)).usage().totalTokens());
+    }
+
+    @Test
+    void mapsToolCallDeltasToToolUse() {
+        OpenAiStreamMapper mapper = new OpenAiStreamMapper();
+
+        List<StreamEvent> first = mapper.map(new SseEvent("message", "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"WriteFile\",\"arguments\":\"{\\\"path\\\":\"}}]},\"finish_reason\":null}]}"));
+        assertEquals(1, first.size());
+        assertInstanceOf(StreamEvent.MessageStart.class, first.get(0));
+
+        List<StreamEvent> second = mapper.map(new SseEvent("message", "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"a.txt\\\",\\\"content\\\":\\\"ok\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}"));
+
+        assertEquals(2, second.size());
+        StreamEvent.ToolUse toolUse = (StreamEvent.ToolUse) second.get(0);
+        assertEquals("call_1", toolUse.id());
+        assertEquals("WriteFile", toolUse.name());
+        assertEquals("a.txt", toolUse.input().path("path").asText());
+        assertEquals("ok", toolUse.input().path("content").asText());
+        assertEquals("tool_calls", ((StreamEvent.MessageDelta) second.get(1)).stopReason());
     }
 
     @Test

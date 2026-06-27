@@ -21,10 +21,11 @@ import java.util.Set;
 
 public class LanternaLunaTui implements LunaTui {
     private static final String ESC = "\u001B";
+    private static final long ESC_SEQUENCE_TIMEOUT_MILLIS = 100L;
 
     private final ConversationManager conversationManager;
     private final ChatOrchestrator orchestrator;
-    private final StringBuilder input = new StringBuilder();
+    private final InputLineBuffer input = new InputLineBuffer();
     private final Set<String> startedMessages = new HashSet<>();
     private final Set<String> finishedMessages = new HashSet<>();
     private final Map<String, Integer> printedLengths = new HashMap<>();
@@ -98,19 +99,63 @@ public class LanternaLunaTui implements LunaTui {
                 running = false;
                 break;
             }
-            handleKey(key);
+            if (key == 27) {
+                if (!handleEscapeSequence(reader)) {
+                    running = false;
+                    break;
+                }
+            } else {
+                handleKey(key);
+            }
             requestRender();
         }
     }
 
-    private void handleKey(int key) {
-        if (key == 27) {
-            running = false;
-            return;
+    private boolean handleEscapeSequence(NonBlockingReader reader) throws IOException {
+        int second = reader.read(ESC_SEQUENCE_TIMEOUT_MILLIS);
+        if (second == NonBlockingReader.READ_EXPIRED) {
+            return false;
         }
+        if (second == NonBlockingReader.EOF) {
+            running = false;
+            return true;
+        }
+        if (second != '[' && second != 'O') {
+            return true;
+        }
+
+        int third = reader.read(ESC_SEQUENCE_TIMEOUT_MILLIS);
+        if (third == NonBlockingReader.READ_EXPIRED || third == NonBlockingReader.EOF) {
+            return true;
+        }
+        handleEscapeCommand(third, reader);
+        return true;
+    }
+
+    private void handleEscapeCommand(int command, NonBlockingReader reader) throws IOException {
+        switch (command) {
+            case 'C' -> input.moveRight();
+            case 'D' -> input.moveLeft();
+            case 'H' -> input.moveHome();
+            case 'F' -> input.moveEnd();
+            case '1', '7' -> consumeTildeSequence(reader, input::moveHome);
+            case '4', '8' -> consumeTildeSequence(reader, input::moveEnd);
+            case '3' -> consumeTildeSequence(reader, input::delete);
+            default -> {
+            }
+        }
+    }
+
+    private void consumeTildeSequence(NonBlockingReader reader, Runnable action) throws IOException {
+        int next = reader.read(ESC_SEQUENCE_TIMEOUT_MILLIS);
+        if (next == '~') {
+            action.run();
+        }
+    }
+
+    private void handleKey(int key) {
         if (key == '\r' || key == '\n') {
-            String content = input.toString().strip();
-            input.setLength(0);
+            String content = input.consume().strip();
             clearPromptLine(terminal.writer());
             promptVisible = false;
             if (!content.isEmpty()) {
@@ -121,14 +166,12 @@ public class LanternaLunaTui implements LunaTui {
             return;
         }
         if (key == 127 || key == '\b') {
-            if (!input.isEmpty()) {
-                input.deleteCharAt(input.length() - 1);
-            }
+            input.backspace();
             drawPrompt(terminal.writer());
             return;
         }
         if (!Character.isISOControl(key)) {
-            input.appendCodePoint(key);
+            input.insert(key);
             drawPrompt(terminal.writer());
         }
     }
@@ -216,7 +259,11 @@ public class LanternaLunaTui implements LunaTui {
     }
 
     private void drawPrompt(PrintWriter writer) {
-        writer.print("\r" + ESC + "[K> " + input);
+        writer.print("\r" + ESC + "[K> " + input.content());
+        int columnsAfterCursor = input.columnsAfterCursor();
+        if (columnsAfterCursor > 0) {
+            writer.print(ESC + "[" + columnsAfterCursor + "D");
+        }
         writer.flush();
         terminal.flush();
         promptVisible = true;

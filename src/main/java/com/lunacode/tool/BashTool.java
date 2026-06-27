@@ -76,7 +76,8 @@ public class BashTool implements Tool {
     private List<String> shellCommand(String command) {
         String os = System.getProperty("os.name", "").toLowerCase();
         if (os.contains("win")) {
-            return List.of("cmd.exe", "/c", command);
+            String shell = System.getenv().getOrDefault("ComSpec", "cmd.exe");
+            return List.of(shell, "/d", "/c", command);
         }
         return List.of("/bin/sh", "-lc", command);
     }
