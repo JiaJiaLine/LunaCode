@@ -3,7 +3,7 @@ package com.lunacode.tool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.lunacode.agent.AgentMode;
+import com.lunacode.runtime.AgentMode;
 
 import java.util.ArrayList;
 import java.util.HashMap;

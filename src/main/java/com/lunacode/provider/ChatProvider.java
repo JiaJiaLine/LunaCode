@@ -1,7 +1,7 @@
 package com.lunacode.provider;
 
 import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.lunacode.agent.PromptBundle;
+import com.lunacode.prompt.PromptBundle;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ApiMessage;
 import com.lunacode.stream.StreamEvent;

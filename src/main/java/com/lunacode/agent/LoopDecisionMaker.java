@@ -1,5 +1,9 @@
 package com.lunacode.agent;
 
+import com.lunacode.agent.turn.AgentTurnResult;
+
+import com.lunacode.agent.turn.AgentTurnState;
+
 public final class LoopDecisionMaker {
     public LoopDecision decide(LoopContext context, AgentTurnResult turnResult) {
         if (context.cancellationToken() != null && context.cancellationToken().isCancellationRequested()) {
