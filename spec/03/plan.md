@@ -1,4 +1,4 @@
-﻿# LunaCode Agent Loop Plan
+# LunaCode Agent Loop Plan
 
 ## 架构概览
 
@@ -752,6 +752,63 @@ src/test/java/com/lunacode/
 └── orchestrator/
     └── AgentOrchestratorEventBridgeTest.java
 ```
+
+
+### 文件职责说明
+
+#### 主代码文件
+
+- `agent/AgentLoop.java`：定义 Agent Loop 的统一入口，接收用户请求、事件输出和取消信号。
+- `agent/DefaultAgentLoop.java`：实现多轮 ReAct 循环，负责调用模型、执行工具、回灌工具结果和处理停止条件。
+- `agent/AgentRequest.java`：封装一次 Agent 请求中的用户消息和运行配置。
+- `agent/AgentRunConfig.java`：保存工作目录、运行模式、plan file、最大迭代次数、未知工具阈值和时钟。
+- `agent/AgentMode.java`：定义 Default 和 Plan 两种 Agent 运行模式。
+- `agent/AgentEvent.java`：定义 Agent 输出给 UI 的事件类型，如文本增量、工具调用、工具结果、用量、错误和完成。
+- `agent/AgentEventSink.java`：定义事件发布接口，让 Agent Loop 与具体 UI 渲染解耦。
+- `agent/AgentTurnRunner.java`：执行单轮模型调用，创建 assistant 流式消息并交给流式收集器处理。
+- `agent/AgentTurnInput.java`：描述单轮调用输入，包括 system prompt、历史消息、工具声明、Provider 配置和累计用量。
+- `agent/AgentTurnResult.java`：保存单轮调用结果，包括完整文本、工具调用列表、usage、最终状态和错误摘要。
+- `agent/AgentTurnState.java`：枚举单轮状态机状态，用于表达本轮开始、流式输出、工具收集、完成或失败。
+- `agent/CancellationToken.java`：提供可传播的取消信号，供 UI 请求停止后续轮次。
+- `agent/UserQuestionRequest.java`：表示 Plan Mode 中模型提出的一次需求澄清问题。
+- `agent/UserQuestionBroker.java`：定义 AskUserQuestion 工具与 UI 之间的提问和回答通道。
+- `agent/LoopContext.java`：保存跨轮上下文，如当前轮次、连续未知工具次数和累计 token 用量。
+- `agent/LoopDecision.java`：定义继续执行、正常完成、达到上限、取消、未知工具过多和错误停止等决策结果。
+- `agent/LoopDecisionMaker.java`：集中判断 Agent Loop 是否继续，统一管理所有停止条件。
+- `agent/StreamingTurnCollector.java`：消费 Provider 流式事件，实时发布文本增量，同时收集完整回复、工具调用和 usage。
+- `agent/SystemPromptBuilder.java`：根据环境信息和运行模式构建每轮传给模型的 System Prompt。
+- `agent/SystemPromptConfig.java`：封装构建 System Prompt 所需的工作目录、操作系统、当前时间、模式和 plan file。
+- `config/AgentConfig.java`：定义 Agent Loop 配置项及默认值，包括最大迭代次数、未知工具阈值和默认 plan file。
+- `config/ConfigLoader.java`：读取配置文件，并解析 Provider、thinking 和 agent 配置。
+- `config/ProviderConfig.java`：保存模型 Provider 调用配置，并携带 AgentConfig 供运行时使用。
+- `orchestrator/ChatOrchestrator.java`：定义 TUI 提交消息、取消当前运行和读取状态的接口。
+- `orchestrator/DefaultChatOrchestrator.java`：连接 TUI 与 Agent Loop，解析 `/plan`、`/do`、`/cancel`，并把 AgentEvent 映射为 UI 状态。
+- `orchestrator/StatusSnapshot.java`：保存 UI 状态快照，如 provider、model、token、状态、错误摘要和工具状态。
+- `provider/ChatProvider.java`：定义模型流式调用接口，并支持工具声明和 System Prompt 参数。
+- `provider/AnthropicProvider.java`：实现 Anthropic Messages API 请求，把 System Prompt 写入顶层 `system` 字段。
+- `provider/OpenAiProvider.java`：实现 OpenAI Chat Completions 请求，把 System Prompt 作为第一条 system 消息。
+- `tool/ToolBatch.java`：表示一批工具调用以及该批次是否可以并发执行。
+- `tool/ToolBatchPlanner.java`：根据工具只读性、副作用和并发安全性，将工具调用拆成并发或串行批次。
+- `tool/AskUserQuestionTool.java`：实现 Plan Mode 专用需求澄清工具，把模型问题交给 UI 并回灌用户回答。
+- `tool/ToolExecutionRecord.java`：记录工具调用、工具结果和耗时，用于事件发布和工具结果回灌。
+- `tool/ToolPermissionGateway.java`：定义工具权限判断入口，集中处理 Default、Plan Mode 和 plan file 放行规则。
+- `tool/PermissionDecision.java`：定义权限判断结果：允许、需要确认或拒绝。
+- `tui/LunaTui.java`：定义终端 UI 的基础接口。
+- `tui/LanternaLunaTui.java`：实现终端 UI，负责渲染对话、处理输入、取消快捷键和需求澄清回答。
+
+#### 测试文件
+
+- `agent/DefaultAgentLoopTest.java`：验证多轮循环、工具回灌、停止条件、未知工具保护和取消行为。
+- `agent/AgentTurnRunnerTest.java`：验证单轮调用状态机、System Prompt 传递和 turn_complete 事件。
+- `agent/LoopDecisionMakerTest.java`：验证集中继续决策覆盖完成、继续、上限、取消、错误和未知工具分支。
+- `agent/StreamingTurnCollectorTest.java`：验证流式文本双路收集、工具调用收集、usage 事件和错误事件。
+- `agent/SystemPromptBuilderTest.java`：验证 Default 和 Plan Mode 的 System Prompt 内容。
+- `provider/AnthropicProviderSystemPromptTest.java`：验证 Anthropic 请求体包含顶层 system 字段，并保持 tools/thinking 不变。
+- `provider/OpenAiProviderSystemPromptTest.java`：验证 OpenAI 请求体首条消息为 system。
+- `tool/ToolBatchPlannerTest.java`：验证只读工具并发批次、副作用工具串行批次和未知工具保留。
+- `tool/AskUserQuestionToolTest.java`：验证需求澄清工具的参数校验、broker 调用、回答包装和错误处理。
+- `tool/ToolPermissionGatewayTest.java`：验证权限矩阵、Plan Mode plan file 自动放行和 AskUserQuestion 权限。
+- `orchestrator/AgentOrchestratorEventBridgeTest.java`：验证 Orchestrator 的事件桥接，以及 `/plan`、`/do`、澄清回答和取消路由。
 
 ## 技术决策
 
