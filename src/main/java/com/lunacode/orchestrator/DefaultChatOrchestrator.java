@@ -1,18 +1,20 @@
 package com.lunacode.orchestrator;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.lunacode.agent.AgentLoop;
+import com.lunacode.agent.AgentRequest;
+import com.lunacode.agent.DefaultAgentLoop;
 import com.lunacode.agent.event.AgentEvent;
 import com.lunacode.agent.event.AgentEventSink;
-import com.lunacode.agent.AgentLoop;
-import com.lunacode.runtime.AgentMode;
-import com.lunacode.agent.AgentRequest;
-import com.lunacode.runtime.AgentRunConfig;
-import com.lunacode.interaction.BlockingUserQuestionBroker;
-import com.lunacode.runtime.CancellationToken;
-import com.lunacode.agent.DefaultAgentLoop;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.TokenUsage;
+import com.lunacode.interaction.BlockingPermissionConfirmationBroker;
+import com.lunacode.interaction.BlockingUserQuestionBroker;
 import com.lunacode.provider.ChatProvider;
+import com.lunacode.runtime.AgentMode;
+import com.lunacode.runtime.AgentRunConfig;
+import com.lunacode.runtime.CancellationToken;
 import com.lunacode.tool.DefaultToolPermissionGateway;
 import com.lunacode.tool.DefaultToolRegistry;
 import com.lunacode.tool.ToolBatchPlanner;
@@ -36,6 +38,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private final AtomicReference<CancellationToken> currentToken = new AtomicReference<>();
     private final AgentLoop agentLoop;
     private final BlockingUserQuestionBroker questionBroker;
+    private final BlockingPermissionConfirmationBroker permissionBroker;
     private final Path workspaceRoot;
     private volatile Path lastPlanFile;
 
@@ -120,6 +123,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.config = Objects.requireNonNull(config, "config");
         ToolRegistry safeRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
         this.questionBroker = Objects.requireNonNull(questionBroker, "questionBroker");
+        this.permissionBroker = new BlockingPermissionConfirmationBroker();
         this.onChange = onChange == null ? () -> {} : onChange;
         this.executor = Objects.requireNonNull(executor, "executor");
         this.status = new AtomicReference<>(StatusSnapshot.idle(config.protocol(), config.model()));
@@ -132,7 +136,8 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
                 safeRegistry,
                 toolExecutor,
                 new ToolBatchPlanner(),
-                new DefaultToolPermissionGateway(workspaceRoot)
+                new DefaultToolPermissionGateway(workspaceRoot),
+                permissionBroker
         );
     }
 
@@ -142,6 +147,12 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             return;
         }
         String stripped = content.strip();
+        if (permissionBroker.hasPendingConfirmation()) {
+            permissionBroker.answer(stripped);
+            status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), "responding", null));
+            onChange.run();
+            return;
+        }
         if (questionBroker.hasPendingQuestion()) {
             questionBroker.answer(stripped);
             status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), "responding", null));
@@ -199,6 +210,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             token.cancel();
         }
         questionBroker.cancelPending();
+        permissionBroker.cancelPending();
         status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), "cancelled", "Cancelled by user"));
         onChange.run();
     }
@@ -219,8 +231,11 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
                 String question = toolUseStarted.input().path("question").asText("Waiting for user answer");
                 status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), "waiting_user", question, toolUseStarted.toolName(), summarize(toolUseStarted.input().toString())));
             } else {
-                status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), "tool_running", null, toolUseStarted.toolName(), summarize(toolUseStarted.input().toString())));
+                String summary = toolRunningSummary(toolUseStarted.toolName(), toolUseStarted.input());
+                status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), "tool_running", summary, toolUseStarted.toolName(), summary));
             }
+        } else if (event instanceof AgentEvent.PermissionRequested permissionRequested) {
+            status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), "waiting_permission", permissionRequested.prompt(), permissionRequested.toolName(), permissionRequested.prompt()));
         } else if (event instanceof AgentEvent.ToolResultReady toolResultReady) {
             String state = toolResultReady.result().isError() ? "tool_error" : "tool_done";
             String summary = summarize(toolResultReady.result().content()) + " (" + toolResultReady.duration().toMillis() + "ms)";
@@ -270,6 +285,47 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         return new TokenUsage(current.inputTokens(), current.outputTokens(), null);
     }
 
+    private String toolRunningSummary(String toolName, JsonNode input) {
+        String safeToolName = toolName == null || toolName.isBlank() ? "UnknownTool" : toolName;
+        return switch (safeToolName) {
+            case "WriteFile" -> "Luna正在使用\"" + safeToolName + "\"工具写入\"" + compact(text(input, "path", "file_path"), "未知文件") + "\"";
+            case "EditFile" -> "Luna正在使用\"" + safeToolName + "\"工具修改\"" + compact(text(input, "path", "file_path"), "未知文件") + "\"";
+            case "ReadFile" -> "Luna正在使用\"" + safeToolName + "\"工具读取\"" + compact(text(input, "path", "file_path"), "未知文件") + "\"";
+            case "Bash" -> "Luna正在使用\"" + safeToolName + "\"工具执行\"" + compact(text(input, "command"), "未知命令") + "\"";
+            case "Glob" -> "Luna正在使用\"" + safeToolName + "\"工具查找\"" + compact(text(input, "pattern"), "未知模式") + "\"";
+            case "Grep" -> grepSummary(safeToolName, input);
+            default -> "Luna正在使用\"" + safeToolName + "\"工具处理\"" + compact(input == null ? null : input.toString(), "请求") + "\"";
+        };
+    }
+
+    private String grepSummary(String toolName, JsonNode input) {
+        String pattern = compact(text(input, "pattern"), "未知模式");
+        String path = compact(text(input, "path"), "");
+        if (path.isBlank()) {
+            return "Luna正在使用\"" + toolName + "\"工具搜索\"" + pattern + "\"";
+        }
+        return "Luna正在使用\"" + toolName + "\"工具在\"" + path + "\"中搜索\"" + pattern + "\"";
+    }
+
+    private String text(JsonNode input, String... names) {
+        if (input == null || names == null) {
+            return null;
+        }
+        for (String name : names) {
+            if (input.hasNonNull(name) && !input.path(name).asText().isBlank()) {
+                return input.path(name).asText();
+            }
+        }
+        return null;
+    }
+
+    private String compact(String value, String fallback) {
+        String normalized = value == null ? "" : value.replaceAll("\\s+", " ").strip();
+        if (normalized.isBlank()) {
+            normalized = fallback;
+        }
+        return normalized.length() <= 120 ? normalized : normalized.substring(0, 120) + "...";
+    }
     private String summarize(String value) {
         if (value == null) {
             return null;

@@ -138,7 +138,10 @@ public class LanternaLunaTui implements LunaTui {
 
     private boolean isBusy() {
         String state = orchestrator.status().state();
-        return "responding".equals(state) || "tool_running".equals(state) || "waiting_user".equals(state);
+        return "responding".equals(state)
+                || "tool_running".equals(state)
+                || "waiting_user".equals(state)
+                || "waiting_permission".equals(state);
     }
 
     private void handleEscapeCommand(int command, NonBlockingReader reader) throws IOException {
@@ -247,6 +250,8 @@ public class LanternaLunaTui implements LunaTui {
 
     private boolean shouldPrintStatus(StatusSnapshot status) {
         return "waiting_user".equals(status.state())
+                || "waiting_permission".equals(status.state())
+                || "tool_running".equals(status.state())
                 || "cancelled".equals(status.state())
                 || "error".equals(status.state());
     }
@@ -257,6 +262,10 @@ public class LanternaLunaTui implements LunaTui {
         }
         if ("waiting_user".equals(status.state())) {
             writer.println("Luna [question] " + safeStatusMessage(status));
+        } else if ("waiting_permission".equals(status.state())) {
+            writer.println("Luna [permission] " + safeStatusMessage(status));
+        } else if ("tool_running".equals(status.state())) {
+            writer.println("Luna [tool] " + safeStatusMessage(status));
         } else if ("cancelled".equals(status.state())) {
             writer.println("Luna [cancelled] " + safeStatusMessage(status));
         } else if ("error".equals(status.state())) {
@@ -266,6 +275,9 @@ public class LanternaLunaTui implements LunaTui {
 
     private String safeStatusMessage(StatusSnapshot status) {
         String message = status.errorSummary();
+        if ((message == null || message.isBlank()) && status.toolSummary() != null) {
+            message = status.toolSummary();
+        }
         return message == null || message.isBlank() ? status.state() : message;
     }
 

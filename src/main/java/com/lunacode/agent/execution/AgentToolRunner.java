@@ -2,6 +2,8 @@ package com.lunacode.agent.execution;
 
 import com.lunacode.agent.event.AgentEvent;
 import com.lunacode.agent.event.AgentEventSink;
+import com.lunacode.interaction.PermissionConfirmationBroker;
+import com.lunacode.interaction.PermissionConfirmationRequest;
 import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.runtime.CancellationToken;
 import com.lunacode.tool.PermissionDecision;
@@ -29,6 +31,7 @@ public final class AgentToolRunner {
     private final ToolExecutor toolExecutor;
     private final ToolBatchPlanner batchPlanner;
     private final ToolPermissionGateway permissionGateway;
+    private final PermissionConfirmationBroker confirmationBroker;
 
     public AgentToolRunner(
             ToolRegistry toolRegistry,
@@ -36,10 +39,21 @@ public final class AgentToolRunner {
             ToolBatchPlanner batchPlanner,
             ToolPermissionGateway permissionGateway
     ) {
+        this(toolRegistry, toolExecutor, batchPlanner, permissionGateway, null);
+    }
+
+    public AgentToolRunner(
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
+            ToolBatchPlanner batchPlanner,
+            ToolPermissionGateway permissionGateway,
+            PermissionConfirmationBroker confirmationBroker
+    ) {
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
         this.toolExecutor = toolExecutor;
         this.batchPlanner = batchPlanner == null ? new ToolBatchPlanner() : batchPlanner;
         this.permissionGateway = permissionGateway;
+        this.confirmationBroker = confirmationBroker;
     }
 
     public List<ToolExecutionRecord> executeToolBatches(
@@ -87,12 +101,12 @@ public final class AgentToolRunner {
             PermissionDecision decision = permissionGateway == null
                     ? PermissionDecision.ALLOW
                     : permissionGateway.decide(toolUse, tool, config.mode(), config.planFile());
-            if (decision == PermissionDecision.ALLOW) {
+            if (decision == PermissionDecision.ALLOW || (decision == PermissionDecision.ASK && confirm(toolUse, sink))) {
                 result = toolExecutor == null
                         ? ToolResult.error("工具执行器未配置", Map.of("errorType", "executor_not_configured"))
                         : toolExecutor.execute(toolUse);
             } else if (decision == PermissionDecision.ASK) {
-                result = ToolResult.error("该工具调用需要用户确认，当前版本不会静默执行: " + toolUse.name(), metadata("permission_required"));
+                result = ToolResult.error("用户未确认工具调用，已跳过: " + toolUse.name(), metadata("permission_denied"));
             } else {
                 result = ToolResult.error("工具调用被拒绝: " + toolUse.name(), metadata("permission_denied"));
             }
@@ -101,6 +115,25 @@ public final class AgentToolRunner {
         ToolExecutionRecord record = new ToolExecutionRecord(toolUse, result, duration);
         emit(sink, new AgentEvent.ToolResultReady(toolUse.id(), toolUse.name(), result, duration));
         return record;
+    }
+
+    private boolean confirm(ToolUse toolUse, AgentEventSink sink) {
+        if (confirmationBroker == null) {
+            return false;
+        }
+        String prompt = permissionPrompt(toolUse);
+        emit(sink, new AgentEvent.PermissionRequested(toolUse.id(), toolUse.name(), prompt));
+        try {
+            return confirmationBroker.confirm(new PermissionConfirmationRequest(toolUse.id(), toolUse.name(), prompt));
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private String permissionPrompt(ToolUse toolUse) {
+        String input = toolUse.input() == null ? "{}" : toolUse.input().toString();
+        String summary = input.length() <= 500 ? input : input.substring(0, 500) + "...";
+        return "工具 " + toolUse.name() + " 需要你的确认。参数: " + summary + "。输入 yes/y/确认/允许 执行，其他输入将拒绝。";
     }
 
     private Map<String, Object> metadata(String errorType) {

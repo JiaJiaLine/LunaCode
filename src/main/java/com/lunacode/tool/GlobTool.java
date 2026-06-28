@@ -71,8 +71,14 @@ public class GlobTool implements Tool {
             if (c == '*') {
                 boolean doublestar = i + 1 < glob.length() && glob.charAt(i + 1) == '*';
                 if (doublestar) {
-                    regex.append(".*");
-                    i++;
+                    boolean followedBySlash = i + 2 < glob.length() && glob.charAt(i + 2) == '/';
+                    if (followedBySlash) {
+                        regex.append("(?:.*/)?");
+                        i += 2;
+                    } else {
+                        regex.append(".*");
+                        i++;
+                    }
                 } else {
                     regex.append("[^/]*");
                 }
