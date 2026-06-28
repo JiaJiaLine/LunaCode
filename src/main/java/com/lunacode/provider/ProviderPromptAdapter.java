@@ -1,6 +1,6 @@
 package com.lunacode.provider;
 
-import com.lunacode.agent.PromptBundle;
+import com.lunacode.prompt.PromptBundle;
 import com.lunacode.config.ProviderConfig;
 
 public interface ProviderPromptAdapter {

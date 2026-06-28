@@ -1,6 +1,6 @@
 package com.lunacode.tool;
 
-import com.lunacode.agent.UserQuestionBroker;
+import com.lunacode.interaction.UserQuestionBroker;
 
 import java.nio.file.Path;
 import java.time.Duration;

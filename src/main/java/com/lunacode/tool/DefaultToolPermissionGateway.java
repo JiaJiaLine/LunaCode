@@ -1,7 +1,7 @@
 package com.lunacode.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.lunacode.agent.AgentMode;
+import com.lunacode.runtime.AgentMode;
 
 import java.nio.file.Path;
 import java.util.Objects;

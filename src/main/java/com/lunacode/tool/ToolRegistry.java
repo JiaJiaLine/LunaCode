@@ -1,7 +1,7 @@
 package com.lunacode.tool;
 
 import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.lunacode.agent.AgentMode;
+import com.lunacode.runtime.AgentMode;
 
 import java.util.List;
 import java.util.Optional;

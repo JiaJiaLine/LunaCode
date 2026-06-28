@@ -1,13 +1,13 @@
 package com.lunacode.orchestrator;
 
-import com.lunacode.agent.AgentEvent;
-import com.lunacode.agent.AgentEventSink;
+import com.lunacode.agent.event.AgentEvent;
+import com.lunacode.agent.event.AgentEventSink;
 import com.lunacode.agent.AgentLoop;
-import com.lunacode.agent.AgentMode;
+import com.lunacode.runtime.AgentMode;
 import com.lunacode.agent.AgentRequest;
-import com.lunacode.agent.AgentRunConfig;
-import com.lunacode.agent.BlockingUserQuestionBroker;
-import com.lunacode.agent.CancellationToken;
+import com.lunacode.runtime.AgentRunConfig;
+import com.lunacode.interaction.BlockingUserQuestionBroker;
+import com.lunacode.runtime.CancellationToken;
 import com.lunacode.agent.DefaultAgentLoop;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ConversationManager;

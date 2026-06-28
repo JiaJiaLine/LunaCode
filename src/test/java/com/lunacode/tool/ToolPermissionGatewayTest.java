@@ -2,7 +2,7 @@ package com.lunacode.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lunacode.agent.AgentMode;
+import com.lunacode.runtime.AgentMode;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;

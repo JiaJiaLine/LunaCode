@@ -1,6 +1,6 @@
 package com.lunacode.app;
 
-import com.lunacode.agent.BlockingUserQuestionBroker;
+import com.lunacode.interaction.BlockingUserQuestionBroker;
 import com.lunacode.config.ConfigLoader;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ConversationManager;

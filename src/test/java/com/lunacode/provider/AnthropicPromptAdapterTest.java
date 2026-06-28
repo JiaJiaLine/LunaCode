@@ -1,5 +1,23 @@
 package com.lunacode.provider;
 
+import com.lunacode.prompt.SystemReminderKind;
+
+import com.lunacode.prompt.SystemReminder;
+
+import com.lunacode.prompt.SystemChannel;
+
+import com.lunacode.prompt.StaticSystemPromptBuilder;
+
+import com.lunacode.prompt.PromptCachePolicy;
+
+import com.lunacode.prompt.PromptBundle;
+
+import com.lunacode.prompt.MessageChannel;
+
+import com.lunacode.prompt.GitStatusSnapshot;
+
+import com.lunacode.prompt.EnvironmentContext;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lunacode.agent.*;
 import com.lunacode.config.ProviderConfig;

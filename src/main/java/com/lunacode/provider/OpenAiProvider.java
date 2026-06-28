@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.lunacode.agent.PromptBundle;
+import com.lunacode.prompt.PromptBundle;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ApiMessage;
 import com.lunacode.stream.OpenAiStreamMapper;

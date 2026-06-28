@@ -1,5 +1,15 @@
 package com.lunacode.agent;
 
+import com.lunacode.runtime.CancellationToken;
+
+import com.lunacode.runtime.AgentRunConfig;
+
+import com.lunacode.runtime.AgentMode;
+
+import com.lunacode.agent.turn.AgentTurnState;
+
+import com.lunacode.agent.turn.AgentTurnResult;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lunacode.conversation.TokenUsage;
 import com.lunacode.tool.ToolUse;
