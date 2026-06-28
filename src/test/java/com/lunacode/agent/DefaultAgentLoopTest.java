@@ -65,7 +65,7 @@ class DefaultAgentLoopTest {
         loop.run(new AgentRequest("bad", new AgentRunConfig(Path.of("."), AgentMode.DEFAULT, Path.of("plan.md"), 8, 1, Clock.systemUTC())), events::add, new CancellationToken());
 
         assertEquals(2, provider.calls);
-        assertTrue(events.stream().anyMatch(event -> event instanceof AgentEvent.ErrorOccurred error && error.message().contains("unknown")));
+        assertTrue(events.stream().anyMatch(event -> event instanceof AgentEvent.ErrorOccurred error && error.message().contains("未知工具")));
     }
 
     private ProviderConfig config() {

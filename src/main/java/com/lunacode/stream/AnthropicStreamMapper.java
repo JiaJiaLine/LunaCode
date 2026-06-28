@@ -2,6 +2,7 @@ package com.lunacode.stream;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lunacode.conversation.CacheUsageStatus;
 import com.lunacode.conversation.TokenUsage;
 
 import java.util.HashMap;
@@ -37,7 +38,7 @@ public class AnthropicStreamMapper {
 
     private StreamEvent.MessageStart mapMessageStart(JsonNode root) {
         JsonNode usage = root.path("message").path("usage");
-        return new StreamEvent.MessageStart(new TokenUsage(intOrNull(usage, "input_tokens"), null, null));
+        return new StreamEvent.MessageStart(usageFrom(usage, true));
     }
 
     private StreamEvent.ContentBlockStart mapContentBlockStart(JsonNode root) {
@@ -79,9 +80,25 @@ public class AnthropicStreamMapper {
     private StreamEvent.MessageDelta mapMessageDelta(JsonNode root) {
         JsonNode usage = root.path("usage");
         String stopReason = textOrNull(root.path("delta"), "stop_reason");
-        return new StreamEvent.MessageDelta(new TokenUsage(null, intOrNull(usage, "output_tokens"), null), stopReason);
+        return new StreamEvent.MessageDelta(usageFrom(usage, false), stopReason);
     }
 
+    private TokenUsage usageFrom(JsonNode usage, boolean startEvent) {
+        if (usage.isMissingNode() || usage.isNull()) {
+            return TokenUsage.unknown();
+        }
+        Integer cacheRead = intOrNull(usage, "cache_read_input_tokens");
+        Integer cacheCreation = intOrNull(usage, "cache_creation_input_tokens");
+        CacheUsageStatus status = cacheRead != null || cacheCreation != null ? CacheUsageStatus.SUPPORTED : CacheUsageStatus.UNKNOWN;
+        return new TokenUsage(
+                startEvent ? intOrNull(usage, "input_tokens") : null,
+                startEvent ? null : intOrNull(usage, "output_tokens"),
+                null,
+                cacheRead,
+                cacheCreation,
+                status
+        );
+    }
     private Integer intOrNull(JsonNode node, String field) {
         JsonNode value = node.path(field);
         return value.isMissingNode() || value.isNull() ? null : value.asInt();

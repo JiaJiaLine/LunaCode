@@ -17,9 +17,7 @@ import com.lunacode.tool.ToolRegistry;
 import com.lunacode.tool.ToolResult;
 import com.lunacode.tool.ToolUse;
 
-import java.nio.file.Path;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -37,7 +35,7 @@ public final class DefaultAgentLoop implements AgentLoop {
     private final ToolPermissionGateway permissionGateway;
     private final AgentTurnRunner turnRunner;
     private final LoopDecisionMaker decisionMaker;
-    private final SystemPromptBuilder promptBuilder;
+    private final PromptContextBuilder promptContextBuilder;
 
     public DefaultAgentLoop(
             ConversationManager conversationManager,
@@ -56,7 +54,7 @@ public final class DefaultAgentLoop implements AgentLoop {
         this.permissionGateway = permissionGateway;
         this.turnRunner = new AgentTurnRunner(conversationManager, Objects.requireNonNull(provider, "provider"));
         this.decisionMaker = new LoopDecisionMaker();
-        this.promptBuilder = new SystemPromptBuilder();
+        this.promptContextBuilder = new PromptContextBuilder();
     }
 
     @Override
@@ -77,19 +75,19 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
 
             int turnIndex = turns + 1;
-            String systemPrompt = promptBuilder.build(new SystemPromptConfig(
-                    config.workDir(),
-                    System.getProperty("os.name", "unknown"),
-                    Instant.now(config.clock()),
-                    config.mode(),
-                    config.planFile()
-            ));
+            PromptBundle promptBundle = promptContextBuilder.build(
+                    config,
+                    turnIndex,
+                    conversationManager.toAPIFormat(),
+                    toolRegistry.toAPIFormat(config.mode())
+            );
             AgentTurnInput input = new AgentTurnInput(
                     turnIndex,
-                    systemPrompt,
-                    conversationManager.toAPIFormat(),
+                    promptBundle.system().staticPrompt().render(),
+                    promptBundle,
+                    promptBundle.messages().history(),
                     providerConfig,
-                    toolRegistry.toAPIFormat(config.mode()),
+                    promptBundle.toolDeclarations(),
                     cumulativeUsage,
                     sink
             );
@@ -180,7 +178,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             PermissionDecision decision = permissionGateway == null
                     ? PermissionDecision.ALLOW
                     : permissionGateway.decide(toolUse, tool, config.mode(), config.planFile());
-            if (decision == PermissionDecision.ALLOW || (decision == PermissionDecision.ASK && config.mode() == AgentMode.DEFAULT)) {
+            if (decision == PermissionDecision.ALLOW) {
                 result = toolExecutor == null
                         ? ToolResult.error("工具执行器未配置", Map.of("errorType", "executor_not_configured"))
                         : toolExecutor.execute(toolUse);
