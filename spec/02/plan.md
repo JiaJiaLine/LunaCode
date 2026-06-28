@@ -1,4 +1,4 @@
-﻿# LunaCode 工具系统 Plan
+# LunaCode 工具系统 Plan
 
 ## 架构概览
 
@@ -562,59 +562,59 @@ user:
 LunaCode/
 ├── spec/
 │   └── 02/
-│       ├── spec.md
-│       ├── plan.md
-│       ├── task.md
-│       └── checklist.md
+│       ├── spec.md                         # 工具系统需求说明，定义目标、边界和验收标准。
+│       ├── plan.md                         # 工具系统技术设计，说明架构、接口、数据结构和决策。
+│       ├── task.md                         # 工具系统开发任务拆解，列出文件、步骤和验证方式。
+│       └── checklist.md                    # 工具系统验收清单，覆盖行为、集成、测试和端到端场景。
 ├── src/
 │   ├── main/java/com/lunacode/
 │   │   ├── conversation/
-│   │   │   ├── ApiMessage.java
-│   │   │   ├── ContentBlock.java
-│   │   │   ├── ConversationManager.java
-│   │   │   └── DefaultConversationManager.java
+│   │   │   ├── ApiMessage.java             # Provider API 消息模型，表示 role 和内容块列表。
+│   │   │   ├── ContentBlock.java           # Claude 兼容内容块模型，支持 text、tool_use 和 tool_result。
+│   │   │   ├── ConversationManager.java    # 对话历史管理接口，提供普通消息和工具消息写入能力。
+│   │   │   └── DefaultConversationManager.java # 对话历史默认实现，维护消息状态并转换为 API 格式。
 │   │   ├── orchestrator/
-│   │   │   ├── ChatOrchestrator.java
-│   │   │   ├── DefaultChatOrchestrator.java
-│   │   │   └── StatusSnapshot.java
+│   │   │   ├── ChatOrchestrator.java       # TUI 调用的聊天编排接口。
+│   │   │   ├── DefaultChatOrchestrator.java # 串联用户输入、Provider 流、工具执行和结果回灌。
+│   │   │   └── StatusSnapshot.java         # UI 状态快照，记录响应状态、token、工具名和错误摘要。
 │   │   ├── provider/
-│   │   │   ├── AnthropicProvider.java
-│   │   │   └── ChatProvider.java
+│   │   │   ├── AnthropicProvider.java      # Anthropic 请求实现，序列化工具声明和混合内容块消息。
+│   │   │   └── ChatProvider.java           # 模型 Provider 抽象接口，接收消息和可选工具声明。
 │   │   ├── stream/
-│   │   │   ├── ClaudeStreamMapper.java
-│   │   │   ├── StreamEvent.java
-│   │   │   └── ToolUseBuffer.java
+│   │   │   ├── ClaudeStreamMapper.java     # Claude SSE 流映射器，解析文本增量和工具调用事件。
+│   │   │   ├── StreamEvent.java            # 统一流式事件模型，表达文本、工具调用、用量和错误。
+│   │   │   └── ToolUseBuffer.java          # 工具调用参数缓冲区，拼接 input_json_delta JSON 碎片。
 │   │   └── tool/
-│   │       ├── BashTool.java
-│   │       ├── DefaultToolExecutor.java
-│   │       ├── DefaultToolRegistry.java
-│   │       ├── EditFileTool.java
-│   │       ├── GlobTool.java
-│   │       ├── GrepTool.java
-│   │       ├── ReadFileTool.java
-│   │       ├── Tool.java
-│   │       ├── ToolExecutionContext.java
-│   │       ├── ToolExecutor.java
-│   │       ├── ToolRegistry.java
-│   │       ├── ToolResult.java
-│   │       ├── ValidationError.java
-│   │       ├── WorkspacePathResolver.java
-│   │       └── WriteFileTool.java
+│   │       ├── BashTool.java               # 执行工作区命令，返回退出码、stdout、stderr 和超时状态。
+│   │       ├── DefaultToolExecutor.java    # 工具执行器默认实现，负责查找、校验、执行和错误包装。
+│   │       ├── DefaultToolRegistry.java    # 工具注册中心默认实现，管理启停并生成 Claude tools 声明。
+│   │       ├── EditFileTool.java           # 基于原文唯一匹配修改文件，失败时返回结构化错误。
+│   │       ├── GlobTool.java               # 按 glob 模式查找工作区文件，支持 ** 递归匹配。
+│   │       ├── GrepTool.java               # 搜索工作区文本内容，返回路径、行号、列号和摘要。
+│   │       ├── ReadFileTool.java           # 读取工作区文本文件，支持 offset/limit 并返回原始行号。
+│   │       ├── Tool.java                   # 统一工具接口，定义元信息、Schema、执行和校验入口。
+│   │       ├── ToolExecutionContext.java   # 工具执行上下文，提供工作区、超时、输出上限和脱敏器。
+│   │       ├── ToolExecutor.java           # 工具执行器接口，根据 ToolUse 返回 ToolResult。
+│   │       ├── ToolRegistry.java           # 工具注册中心接口，提供注册、启停、查询和声明生成能力。
+│   │       ├── ToolResult.java             # 工具执行结果，包含模型可读内容、错误标记和 UI metadata。
+│   │       ├── ValidationError.java        # 工具参数校验错误，描述错误码和可理解消息。
+│   │       ├── WorkspacePathResolver.java  # 工作区路径解析器，阻止路径穿越和工作区外访问。
+│   │       └── WriteFileTool.java          # 安全写入文本文件，递归建目录、写临时文件并移动到目标路径。
 │   └── test/java/com/lunacode/
 │       ├── conversation/
-│       │   └── ToolMessageFormatTest.java
+│       │   └── ToolMessageFormatTest.java  # 验证 text、tool_use、tool_result 的历史格式和 ID 配对。
 │       ├── orchestrator/
-│       │   └── ToolOrchestratorTest.java
+│       │   └── ToolOrchestratorTest.java   # 验证工具调用执行、结果回灌和禁止二次工具循环。
 │       ├── stream/
-│       │   └── ClaudeToolUseStreamMapperTest.java
+│       │   └── ClaudeToolUseStreamMapperTest.java # 验证 Claude 工具参数碎片拼接和解析错误处理。
 │       └── tool/
-│           ├── ToolRegistryTest.java
-│           ├── ReadFileToolTest.java
-│           ├── WriteFileToolTest.java
-│           ├── EditFileToolTest.java
-│           ├── BashToolTest.java
-│           ├── GlobToolTest.java
-│           └── GrepToolTest.java
+│           ├── ToolRegistryTest.java       # 验证工具注册、启停、声明生成和执行器错误包装。
+│           ├── ReadFileToolTest.java       # 验证文件读取、行号、分页、缺失文件和路径边界。
+│           ├── WriteFileToolTest.java      # 验证建目录、写入、覆盖、权限 metadata 和参数错误。
+│           ├── EditFileToolTest.java       # 验证唯一匹配替换、无匹配、多匹配和换行兼容修改。
+│           ├── BashToolTest.java           # 验证命令成功、非零退出、超时和敏感输出脱敏。
+│           ├── GlobToolTest.java           # 验证递归 glob 匹配和无结果空列表行为。
+│           └── GrepToolTest.java           # 验证文本搜索结果以及跳过二进制和构建产物目录。
 ```
 
 ## 技术决策

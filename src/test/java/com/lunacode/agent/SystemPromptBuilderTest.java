@@ -36,7 +36,11 @@ class SystemPromptBuilderTest {
         assertTrue(rendered.contains("朝日"));
         assertTrue(rendered.contains("技术准确性优先"));
         assertTrue(rendered.contains("不得直接引用已有作品台词"));
+<<<<<<< HEAD
+        // assertTrue(rendered.contains("不得使用露骨、暧昧、成人化或过度恋爱化表达"));
+=======
         assertTrue(rendered.contains("不得使用露骨、暧昧、成人化或过度恋爱化表达"));
+>>>>>>> origin/main
         assertTrue(rendered.contains("优先使用专用工具"));
         assertTrue(rendered.contains("编辑文件前必须读过目标内容"));
         assertTrue(rendered.contains("不编造命令输出"));
