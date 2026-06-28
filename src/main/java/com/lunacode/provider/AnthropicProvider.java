@@ -3,6 +3,7 @@ package com.lunacode.provider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.lunacode.agent.PromptBundle;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ApiMessage;
 import com.lunacode.conversation.ContentBlock;
@@ -24,6 +25,7 @@ public class AnthropicProvider implements ChatProvider {
     private final HttpClient httpClient;
     private final ObjectMapper mapper = new ObjectMapper();
     private final AnthropicStreamMapper streamMapper = new AnthropicStreamMapper();
+    private final AnthropicPromptAdapter promptAdapter = new AnthropicPromptAdapter();
 
     public AnthropicProvider(HttpClient httpClient) {
         this.httpClient = httpClient;
@@ -63,6 +65,33 @@ public class AnthropicProvider implements ChatProvider {
         }
     }
 
+    @Override
+    public Stream<StreamEvent> streamChat(PromptBundle promptBundle, ProviderConfig config) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(endpoint(config.baseUrl(), "/v1/messages"))
+                    .header("x-api-key", config.apiKey())
+                    .header("anthropic-version", ANTHROPIC_VERSION)
+                    .header("content-type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(promptBundle, config)))
+                    .build();
+            HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                response.body().close();
+                return Stream.of(new StreamEvent.Error("Anthropic 请求失败，HTTP 状态码: " + response.statusCode(), null));
+            }
+            SseParser parser = new SseParser();
+            return response.body()
+                    .flatMap(line -> parser.accept(line).stream())
+                    .flatMap(event -> streamMapper.map(event).stream())
+                    .onClose(response.body()::close);
+        } catch (Exception e) {
+            return Stream.of(new StreamEvent.Error("Anthropic 请求失败", e));
+        }
+    }
+
+    String buildRequestBody(PromptBundle promptBundle, ProviderConfig config) throws Exception {
+        return promptAdapter.buildRequestBody(promptBundle, config);
+    }
     String buildRequestBody(List<ApiMessage> messages, ProviderConfig config) throws Exception {
         return buildRequestBody(messages, config, mapper.createArrayNode(), null);
     }

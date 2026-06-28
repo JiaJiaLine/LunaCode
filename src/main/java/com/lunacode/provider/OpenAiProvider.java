@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.lunacode.agent.PromptBundle;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ApiMessage;
 import com.lunacode.stream.OpenAiStreamMapper;
@@ -21,6 +22,7 @@ public class OpenAiProvider implements ChatProvider {
     private final HttpClient httpClient;
     private final ObjectMapper mapper = new ObjectMapper();
     private final OpenAiStreamMapper streamMapper = new OpenAiStreamMapper();
+    private final OpenAiPromptAdapter promptAdapter = new OpenAiPromptAdapter();
 
     public OpenAiProvider(HttpClient httpClient) {
         this.httpClient = httpClient;
@@ -59,6 +61,32 @@ public class OpenAiProvider implements ChatProvider {
         }
     }
 
+    @Override
+    public Stream<StreamEvent> streamChat(PromptBundle promptBundle, ProviderConfig config) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder(endpoint(config.baseUrl(), "/v1/chat/completions"))
+                    .header("authorization", "Bearer " + config.apiKey())
+                    .header("content-type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(promptBundle, config)))
+                    .build();
+            HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                response.body().close();
+                return Stream.of(new StreamEvent.Error("OpenAI request failed, HTTP status: " + response.statusCode(), null));
+            }
+            SseParser parser = new SseParser();
+            return response.body()
+                    .flatMap(line -> parser.accept(line).stream())
+                    .flatMap(event -> streamMapper.map(event).stream())
+                    .onClose(response.body()::close);
+        } catch (Exception e) {
+            return Stream.of(new StreamEvent.Error("OpenAI request failed", e));
+        }
+    }
+
+    String buildRequestBody(PromptBundle promptBundle, ProviderConfig config) throws Exception {
+        return promptAdapter.buildRequestBody(promptBundle, config);
+    }
     String buildRequestBody(List<ApiMessage> messages, ProviderConfig config) throws Exception {
         return buildRequestBody(messages, config, mapper.createArrayNode(), null);
     }

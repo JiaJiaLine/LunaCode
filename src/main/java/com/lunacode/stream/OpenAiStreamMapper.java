@@ -2,6 +2,7 @@ package com.lunacode.stream;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lunacode.conversation.CacheUsageStatus;
 import com.lunacode.conversation.TokenUsage;
 
 import java.util.ArrayList;
@@ -116,10 +117,15 @@ public class OpenAiStreamMapper {
         if (usage.isMissingNode() || usage.isNull()) {
             return TokenUsage.unknown();
         }
+        Integer cachedTokens = intOrNull(usage.path("prompt_tokens_details"), "cached_tokens");
+        CacheUsageStatus status = cachedTokens != null ? CacheUsageStatus.SUPPORTED : CacheUsageStatus.UNKNOWN;
         return new TokenUsage(
                 intOrNull(usage, "prompt_tokens"),
                 intOrNull(usage, "completion_tokens"),
-                intOrNull(usage, "total_tokens")
+                intOrNull(usage, "total_tokens"),
+                cachedTokens,
+                null,
+                status
         );
     }
 

@@ -21,12 +21,14 @@ public final class AgentTurnRunner {
     public AgentTurnResult runTurn(AgentTurnInput input) {
         String assistantId = conversationManager.addStreamingAssistantMessage();
         try {
-            Stream<StreamEvent> events = provider.streamChat(
-                    input.messages(),
-                    input.providerConfig(),
-                    input.enabledTools(),
-                    input.systemPrompt()
-            );
+            Stream<StreamEvent> events = input.promptBundle() == null
+                    ? provider.streamChat(
+                            input.messages(),
+                            input.providerConfig(),
+                            input.enabledTools(),
+                            input.systemPrompt()
+                    )
+                    : provider.streamChat(input.promptBundle(), input.providerConfig());
             AgentTurnResult result = collector.collect(input.turnIndex(), events, assistantId, input.sink(), input.cumulativeUsage());
             if (result.finalState() == AgentTurnState.COMPLETED) {
                 conversationManager.completeMessage(assistantId, result.usage());

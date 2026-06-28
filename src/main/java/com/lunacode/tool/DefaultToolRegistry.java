@@ -16,6 +16,7 @@ import java.util.Set;
 
 public class DefaultToolRegistry implements ToolRegistry {
     private final ObjectMapper mapper = new ObjectMapper();
+    private final ToolDescriptionEnhancer descriptionEnhancer = new ToolDescriptionEnhancer();
     private final Map<String, Tool> tools = new LinkedHashMap<>();
     private final Map<String, String> aliases = new HashMap<>();
     private final Set<String> enabled = new LinkedHashSet<>();
@@ -80,7 +81,7 @@ public class DefaultToolRegistry implements ToolRegistry {
             }
             ObjectNode item = array.addObject();
             item.put("name", tool.name());
-            item.put("description", tool.description());
+            item.put("description", descriptionEnhancer.enhance(tool));
             item.set("input_schema", tool.inputSchema());
         }
         return array;
