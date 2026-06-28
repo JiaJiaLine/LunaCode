@@ -1,5 +1,7 @@
 package com.lunacode.orchestrator;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lunacode.agent.event.AgentEvent;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.config.ThinkingConfig;
 import com.lunacode.conversation.ApiMessage;
@@ -56,6 +58,34 @@ class DefaultChatOrchestratorTest {
         assertEquals("error", orchestrator.status().state());
     }
 
+    @Test
+    void toolUseStartedCreatesReadableToolStatus() {
+        ConversationManager manager = new DefaultConversationManager();
+        DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(manager, new CapturingProvider(Stream.empty()), config(), () -> {}, new DirectExecutorService());
+        ObjectMapper mapper = new ObjectMapper();
+
+        orchestrator.emit(new AgentEvent.ToolUseStarted("toolu_1", "WriteFile", mapper.createObjectNode().put("path", "src/Main.java")));
+
+        assertEquals("tool_running", orchestrator.status().state());
+        assertEquals("Luna正在使用\"WriteFile\"工具写入\"src/Main.java\"", orchestrator.status().errorSummary());
+        assertEquals(orchestrator.status().errorSummary(), orchestrator.status().toolSummary());
+
+        orchestrator.emit(new AgentEvent.ToolUseStarted("toolu_2", "Bash", mapper.createObjectNode().put("command", "mvn test")));
+
+        assertEquals("Luna正在使用\"Bash\"工具执行\"mvn test\"", orchestrator.status().toolSummary());
+    }
+
+    @Test
+    void permissionRequestKeepsPromptVisibleInStatus() {
+        ConversationManager manager = new DefaultConversationManager();
+        DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(manager, new CapturingProvider(Stream.empty()), config(), () -> {}, new DirectExecutorService());
+
+        orchestrator.emit(new AgentEvent.PermissionRequested("toolu_1", "WriteFile", "确认写入 src/Main.java"));
+
+        assertEquals("waiting_permission", orchestrator.status().state());
+        assertEquals("确认写入 src/Main.java", orchestrator.status().errorSummary());
+        assertEquals("确认写入 src/Main.java", orchestrator.status().toolSummary());
+    }
     private ProviderConfig config() {
         return new ProviderConfig("openai", "gpt-test", URI.create("https://api.openai.com"), "secret", ThinkingConfig.disabled());
     }

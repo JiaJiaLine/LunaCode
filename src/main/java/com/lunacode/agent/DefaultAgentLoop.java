@@ -11,6 +11,7 @@ import com.lunacode.conversation.ContentBlock;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.MessageRole;
 import com.lunacode.conversation.TokenUsage;
+import com.lunacode.interaction.PermissionConfirmationBroker;
 import com.lunacode.prompt.PromptBundle;
 import com.lunacode.prompt.PromptContextBuilder;
 import com.lunacode.provider.ChatProvider;
@@ -43,10 +44,23 @@ public final class DefaultAgentLoop implements AgentLoop {
             ToolBatchPlanner batchPlanner,
             ToolPermissionGateway permissionGateway
     ) {
+        this(conversationManager, provider, providerConfig, toolRegistry, toolExecutor, batchPlanner, permissionGateway, null);
+    }
+
+    public DefaultAgentLoop(
+            ConversationManager conversationManager,
+            ChatProvider provider,
+            ProviderConfig providerConfig,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
+            ToolBatchPlanner batchPlanner,
+            ToolPermissionGateway permissionGateway,
+            PermissionConfirmationBroker confirmationBroker
+    ) {
         this.conversationManager = Objects.requireNonNull(conversationManager, "conversationManager");
         this.providerConfig = Objects.requireNonNull(providerConfig, "providerConfig");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
-        this.toolRunner = new AgentToolRunner(toolRegistry, toolExecutor, batchPlanner, permissionGateway);
+        this.toolRunner = new AgentToolRunner(toolRegistry, toolExecutor, batchPlanner, permissionGateway, confirmationBroker);
         this.turnRunner = new AgentTurnRunner(conversationManager, Objects.requireNonNull(provider, "provider"));
         this.decisionMaker = new LoopDecisionMaker();
         this.promptContextBuilder = new PromptContextBuilder();

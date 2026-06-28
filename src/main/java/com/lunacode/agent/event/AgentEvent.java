@@ -9,6 +9,7 @@ import java.time.Duration;
 public sealed interface AgentEvent permits
         AgentEvent.StreamText,
         AgentEvent.ToolUseStarted,
+        AgentEvent.PermissionRequested,
         AgentEvent.ToolResultReady,
         AgentEvent.TurnComplete,
         AgentEvent.LoopComplete,
@@ -18,6 +19,8 @@ public sealed interface AgentEvent permits
     record StreamText(String text) implements AgentEvent {}
 
     record ToolUseStarted(String requestId, String toolName, JsonNode input) implements AgentEvent {}
+
+    record PermissionRequested(String requestId, String toolName, String prompt) implements AgentEvent {}
 
     record ToolResultReady(String requestId, String toolName, ToolResult result, Duration duration) implements AgentEvent {}
 
