@@ -31,17 +31,22 @@ public class AnthropicProvider implements ChatProvider {
 
     @Override
     public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config) {
-        return streamChat(messages, config, mapper.createArrayNode());
+        return streamChat(messages, config, mapper.createArrayNode(), null);
     }
 
     @Override
     public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools) {
+        return streamChat(messages, config, enabledTools, null);
+    }
+
+    @Override
+    public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools, String systemPrompt) {
         try {
             HttpRequest request = HttpRequest.newBuilder(endpoint(config.baseUrl(), "/v1/messages"))
                     .header("x-api-key", config.apiKey())
                     .header("anthropic-version", ANTHROPIC_VERSION)
                     .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages, config, enabledTools)))
+                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages, config, enabledTools, systemPrompt)))
                     .build();
             HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -59,14 +64,21 @@ public class AnthropicProvider implements ChatProvider {
     }
 
     String buildRequestBody(List<ApiMessage> messages, ProviderConfig config) throws Exception {
-        return buildRequestBody(messages, config, mapper.createArrayNode());
+        return buildRequestBody(messages, config, mapper.createArrayNode(), null);
     }
 
     String buildRequestBody(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools) throws Exception {
+        return buildRequestBody(messages, config, enabledTools, null);
+    }
+
+    String buildRequestBody(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools, String systemPrompt) throws Exception {
         ObjectNode root = mapper.createObjectNode();
         root.put("model", config.model());
         root.put("stream", true);
         root.put("max_tokens", DEFAULT_MAX_TOKENS);
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            root.put("system", systemPrompt);
+        }
         ArrayNode messageArray = root.putArray("messages");
         for (ApiMessage message : messages) {
             ObjectNode item = messageArray.addObject();

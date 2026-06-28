@@ -44,7 +44,8 @@ public class ConfigLoader {
         URI baseUrl = parseUri(requireText(raw.baseUrl(), "base_url"));
         String apiKey = resolveApiKey(requireText(raw.apiKey(), "api_key"));
         ThinkingConfig thinking = toThinkingConfig(raw.thinking());
-        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking);
+        AgentConfig agent = toAgentConfig(raw.agent());
+        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent);
     }
 
     private String requireText(String value, String field) {
@@ -86,17 +87,39 @@ public class ConfigLoader {
         return new ThinkingConfig(raw.enabled(), raw.budgetTokens());
     }
 
+    private AgentConfig toAgentConfig(RawAgent raw) {
+        if (raw == null) {
+            return AgentConfig.defaults();
+        }
+        AgentConfig defaults = AgentConfig.defaults();
+        int maxIterations = raw.maxIterations() == null ? defaults.maxIterations() : raw.maxIterations();
+        int maxUnknownTools = raw.maxConsecutiveUnknownTools() == null
+                ? defaults.maxConsecutiveUnknownTools()
+                : raw.maxConsecutiveUnknownTools();
+        Path planFile = raw.planFile() == null || raw.planFile().isBlank()
+                ? defaults.planFile()
+                : Path.of(raw.planFile().trim());
+        return new AgentConfig(maxIterations, maxUnknownTools, planFile);
+    }
+
     private record RawConfig(
             String protocol,
             String model,
             @JsonProperty("base_url") String baseUrl,
             @JsonProperty("api_key") String apiKey,
-            RawThinking thinking
+            RawThinking thinking,
+            RawAgent agent
     ) {}
 
     private record RawThinking(
             boolean enabled,
             @JsonProperty("budget_tokens") Integer budgetTokens
+    ) {}
+
+    private record RawAgent(
+            @JsonProperty("max_iterations") Integer maxIterations,
+            @JsonProperty("max_consecutive_unknown_tools") Integer maxConsecutiveUnknownTools,
+            @JsonProperty("plan_file") String planFile
     ) {}
 
     public static class ConfigException extends RuntimeException {

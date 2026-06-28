@@ -32,17 +32,17 @@ class ToolOrchestratorTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void executesToolAddsToolResultAndRequestsFinalReplyWithoutTools() {
+    void executesToolAddsToolResultAndRequestsFinalReplyWithToolsAvailableEachTurn() {
         ConversationManager manager = new DefaultConversationManager();
         CapturingProvider provider = new CapturingProvider(List.of(
                 Stream.of(
                         new StreamEvent.MessageStart(com.lunacode.conversation.TokenUsage.unknown()),
-                        new StreamEvent.ContentDelta(0, "我来读取。"),
+                        new StreamEvent.ContentDelta(0, "I will read it."),
                         new StreamEvent.ToolUse("toolu_1", "ReadFile", mapper.createObjectNode().put("path", "pom.xml")),
                         new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown())
                 ),
                 Stream.of(
-                        new StreamEvent.ContentDelta(0, "pom.xml 里包含 Maven 依赖。"),
+                        new StreamEvent.ContentDelta(0, "pom.xml contains Maven dependencies."),
                         new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown())
                 )
         ));
@@ -51,11 +51,11 @@ class ToolOrchestratorTest {
         ToolExecutor executor = use -> ToolResult.success("1\t<project></project>", Map.of("path", "pom.xml"));
         DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(manager, provider, config(), registry, executor, () -> {}, new DirectExecutorService());
 
-        orchestrator.submitUserMessage("读取 pom.xml");
+        orchestrator.submitUserMessage("read pom.xml");
 
         assertEquals(2, provider.capturedMessages.size());
         assertFalse(provider.capturedTools.get(0).isEmpty());
-        assertTrue(provider.capturedTools.get(1).isEmpty());
+        assertFalse(provider.capturedTools.get(1).isEmpty());
         assertEquals(4, manager.snapshot().size());
         assertEquals(MessageRole.TOOL, manager.snapshot().get(2).role());
         assertEquals("1\t<project></project>", manager.snapshot().get(2).content());
@@ -72,11 +72,12 @@ class ToolOrchestratorTest {
     }
 
     @Test
-    void secondToolUseIsNotExecuted() {
+    void secondToolUseContinuesThroughAgentLoop() {
         ConversationManager manager = new DefaultConversationManager();
         CapturingProvider provider = new CapturingProvider(List.of(
                 Stream.of(new StreamEvent.ToolUse("toolu_1", "ReadFile", mapper.createObjectNode()), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown())),
-                Stream.of(new StreamEvent.ToolUse("toolu_2", "ReadFile", mapper.createObjectNode()), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown()))
+                Stream.of(new StreamEvent.ToolUse("toolu_2", "ReadFile", mapper.createObjectNode()), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown())),
+                Stream.of(new StreamEvent.ContentDelta(0, "done"), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown()))
         ));
         DefaultToolRegistry registry = new DefaultToolRegistry();
         registry.register(new StubTool("ReadFile"));
@@ -87,10 +88,11 @@ class ToolOrchestratorTest {
         };
         DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(manager, provider, config(), registry, executor, () -> {}, new DirectExecutorService());
 
-        orchestrator.submitUserMessage("读文件");
+        orchestrator.submitUserMessage("read files");
 
-        assertEquals(1, executed.size());
-        assertTrue(manager.snapshot().get(3).content().contains("不支持工具结果回灌后的连环工具调用"));
+        assertEquals(2, executed.size());
+        assertEquals(MessageRole.TOOL, manager.snapshot().get(4).role());
+        assertEquals("idle", orchestrator.status().state());
     }
 
     private ProviderConfig config() {

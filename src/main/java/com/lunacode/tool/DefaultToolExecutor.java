@@ -1,5 +1,6 @@
 package com.lunacode.tool;
 
+import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
 
@@ -30,5 +31,11 @@ public class DefaultToolExecutor implements ToolExecutor {
         } catch (Exception e) {
             return ToolResult.error("工具执行失败: " + e.getMessage(), Map.of("errorType", "execution_error"));
         }
+    }
+
+    public ToolExecutionRecord executeRecord(ToolUse toolUse) {
+        long started = System.nanoTime();
+        ToolResult result = execute(toolUse);
+        return new ToolExecutionRecord(toolUse, result, Duration.ofNanos(System.nanoTime() - started));
     }
 }

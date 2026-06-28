@@ -3,6 +3,7 @@ package com.lunacode.tool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.lunacode.agent.AgentMode;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -67,8 +68,16 @@ public class DefaultToolRegistry implements ToolRegistry {
 
     @Override
     public synchronized ArrayNode toAPIFormat() {
+        return toAPIFormat(AgentMode.DEFAULT);
+    }
+
+    @Override
+    public synchronized ArrayNode toAPIFormat(AgentMode mode) {
         ArrayNode array = mapper.createArrayNode();
         for (Tool tool : getEnabledTools()) {
+            if (mode != AgentMode.PLAN && "AskUserQuestion".equals(tool.name())) {
+                continue;
+            }
             ObjectNode item = array.addObject();
             item.put("name", tool.name());
             item.put("description", tool.description());
@@ -99,6 +108,7 @@ public class DefaultToolRegistry implements ToolRegistry {
             case "Bash" -> registerAliases(canonical, "bash", "shell", "run_command", "command");
             case "Glob" -> registerAliases(canonical, "glob", "find_files", "list_files");
             case "Grep" -> registerAliases(canonical, "grep", "search", "search_files");
+            case "AskUserQuestion" -> registerAliases(canonical, "ask_user_question", "ask", "question");
             default -> {
             }
         }

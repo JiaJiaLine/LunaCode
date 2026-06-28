@@ -53,7 +53,7 @@ public class LanternaLunaTui implements LunaTui {
             requestRender();
             eventLoop();
         } catch (IOException e) {
-            throw new TuiException("TUI 启动失败", e);
+            throw new TuiException("TUI startup failed", e);
         } finally {
             restoreTerminal();
         }
@@ -73,7 +73,7 @@ public class LanternaLunaTui implements LunaTui {
         for (InternalMessage message : messages) {
             changed |= renderMessage(writer, message);
         }
-        if (changed || status.toolName() != null) {
+        if (changed || shouldPrintStatus(status)) {
             printStatus(writer, status);
         }
         if (!"responding".equals(status.state()) && !"tool_running".equals(status.state())) {
@@ -114,6 +114,10 @@ public class LanternaLunaTui implements LunaTui {
     private boolean handleEscapeSequence(NonBlockingReader reader) throws IOException {
         int second = reader.read(ESC_SEQUENCE_TIMEOUT_MILLIS);
         if (second == NonBlockingReader.READ_EXPIRED) {
+            if (isBusy()) {
+                orchestrator.cancelCurrentRun();
+                return true;
+            }
             return false;
         }
         if (second == NonBlockingReader.EOF) {
@@ -130,6 +134,11 @@ public class LanternaLunaTui implements LunaTui {
         }
         handleEscapeCommand(third, reader);
         return true;
+    }
+
+    private boolean isBusy() {
+        String state = orchestrator.status().state();
+        return "responding".equals(state) || "tool_running".equals(state) || "waiting_user".equals(state);
     }
 
     private void handleEscapeCommand(int command, NonBlockingReader reader) throws IOException {
@@ -188,12 +197,6 @@ public class LanternaLunaTui implements LunaTui {
         }
 
         if (message.role() == MessageRole.TOOL) {
-            if (startedMessages.add(message.id())) {
-                clearPromptLine(writer);
-                writer.println("Tool [complete] " + message.content());
-                promptVisible = false;
-                return true;
-            }
             return false;
         }
 
@@ -219,7 +222,7 @@ public class LanternaLunaTui implements LunaTui {
 
         if (message.status() == MessageStatus.ERROR) {
             if (finishedMessages.add(message.id())) {
-                String summary = message.errorSummary() == null ? "未知错误" : message.errorSummary();
+                String summary = message.errorSummary() == null ? "unknown error" : message.errorSummary();
                 writer.println();
                 writer.println("Luna [error] " + summary);
                 changed = true;
@@ -236,26 +239,34 @@ public class LanternaLunaTui implements LunaTui {
 
     private void printBanner() {
         PrintWriter writer = terminal.writer();
-        writer.println("LunaCode - 按 Esc 退出");
+        writer.println("LunaCode - press Esc to exit, /cancel or Esc while busy to cancel");
         writer.println("----------------------------------------");
         writer.flush();
         terminal.flush();
     }
 
+    private boolean shouldPrintStatus(StatusSnapshot status) {
+        return "waiting_user".equals(status.state())
+                || "cancelled".equals(status.state())
+                || "error".equals(status.state());
+    }
+
     private void printStatus(PrintWriter writer, StatusSnapshot status) {
-        if ("responding".equals(status.state())) {
+        if (!shouldPrintStatus(status)) {
             return;
         }
-        String inputTokens = status.inputTokens() == null ? "?" : status.inputTokens().toString();
-        String outputTokens = status.outputTokens() == null ? "?" : status.outputTokens().toString();
-        writer.println("[status] provider=" + status.provider()
-                + " model=" + status.model()
-                + " tokens=" + inputTokens + "/" + outputTokens
-                + " state=" + status.state());
-        if (status.toolName() != null) {
-            writer.println("[tool] name=" + status.toolName() + " state=" + status.state()
-                    + (status.toolSummary() == null ? "" : " summary=" + status.toolSummary()));
+        if ("waiting_user".equals(status.state())) {
+            writer.println("Luna [question] " + safeStatusMessage(status));
+        } else if ("cancelled".equals(status.state())) {
+            writer.println("Luna [cancelled] " + safeStatusMessage(status));
+        } else if ("error".equals(status.state())) {
+            writer.println("Luna [error] " + safeStatusMessage(status));
         }
+    }
+
+    private String safeStatusMessage(StatusSnapshot status) {
+        String message = status.errorSummary();
+        return message == null || message.isBlank() ? status.state() : message;
     }
 
     private void drawPrompt(PrintWriter writer) {
@@ -290,7 +301,7 @@ public class LanternaLunaTui implements LunaTui {
             }
             terminal.close();
         } catch (IOException ignored) {
-            // 退出阶段无法恢复，忽略即可。
+            // Nothing useful can be done during terminal shutdown.
         }
     }
 

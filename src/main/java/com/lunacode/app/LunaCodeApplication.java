@@ -1,5 +1,6 @@
 package com.lunacode.app;
 
+import com.lunacode.agent.BlockingUserQuestionBroker;
 import com.lunacode.config.ConfigLoader;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ConversationManager;
@@ -7,6 +8,7 @@ import com.lunacode.conversation.DefaultConversationManager;
 import com.lunacode.orchestrator.DefaultChatOrchestrator;
 import com.lunacode.provider.ChatProvider;
 import com.lunacode.provider.ChatProviderFactory;
+import com.lunacode.tool.AskUserQuestionTool;
 import com.lunacode.tool.BashTool;
 import com.lunacode.tool.DefaultToolExecutor;
 import com.lunacode.tool.DefaultToolRegistry;
@@ -53,9 +55,11 @@ public class LunaCodeApplication {
         registry.register(new BashTool());
         registry.register(new GlobTool(resolver));
         registry.register(new GrepTool(resolver));
+        registry.register(new AskUserQuestionTool());
         SensitiveValueMasker masker = new SensitiveValueMasker();
         masker.add(config.apiKey());
-        ToolExecutionContext toolContext = new ToolExecutionContext(workspaceRoot, Duration.ofSeconds(30), 20_000, masker);
+        BlockingUserQuestionBroker questionBroker = new BlockingUserQuestionBroker();
+        ToolExecutionContext toolContext = new ToolExecutionContext(workspaceRoot, Duration.ofSeconds(30), 20_000, masker, questionBroker);
         DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);
 
         AtomicReference<LanternaLunaTui> tuiRef = new AtomicReference<>();
@@ -65,6 +69,7 @@ public class LunaCodeApplication {
                 config,
                 registry,
                 toolExecutor,
+                questionBroker,
                 () -> {
                     LanternaLunaTui tui = tuiRef.get();
                     if (tui != null) {

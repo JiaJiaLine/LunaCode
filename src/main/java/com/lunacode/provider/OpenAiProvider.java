@@ -28,16 +28,21 @@ public class OpenAiProvider implements ChatProvider {
 
     @Override
     public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config) {
-        return streamChat(messages, config, mapper.createArrayNode());
+        return streamChat(messages, config, mapper.createArrayNode(), null);
     }
 
     @Override
     public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools) {
+        return streamChat(messages, config, enabledTools, null);
+    }
+
+    @Override
+    public Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools, String systemPrompt) {
         try {
             HttpRequest request = HttpRequest.newBuilder(endpoint(config.baseUrl(), "/v1/chat/completions"))
                     .header("authorization", "Bearer " + config.apiKey())
                     .header("content-type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages, config, enabledTools)))
+                    .POST(HttpRequest.BodyPublishers.ofString(buildRequestBody(messages, config, enabledTools, systemPrompt)))
                     .build();
             HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
@@ -55,16 +60,25 @@ public class OpenAiProvider implements ChatProvider {
     }
 
     String buildRequestBody(List<ApiMessage> messages, ProviderConfig config) throws Exception {
-        return buildRequestBody(messages, config, mapper.createArrayNode());
+        return buildRequestBody(messages, config, mapper.createArrayNode(), null);
     }
 
     String buildRequestBody(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools) throws Exception {
+        return buildRequestBody(messages, config, enabledTools, null);
+    }
+
+    String buildRequestBody(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools, String systemPrompt) throws Exception {
         ObjectNode root = mapper.createObjectNode();
         root.put("model", config.model());
         root.put("stream", true);
         ObjectNode streamOptions = root.putObject("stream_options");
         streamOptions.put("include_usage", true);
         ArrayNode messageArray = root.putArray("messages");
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            ObjectNode item = messageArray.addObject();
+            item.put("role", "system");
+            item.put("content", systemPrompt);
+        }
         for (ApiMessage message : messages) {
             ObjectNode item = messageArray.addObject();
             item.put("role", message.role());

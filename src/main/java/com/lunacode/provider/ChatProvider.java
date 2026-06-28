@@ -14,4 +14,8 @@ public interface ChatProvider {
     default Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools) {
         return streamChat(messages, config);
     }
+
+    default Stream<StreamEvent> streamChat(List<ApiMessage> messages, ProviderConfig config, ArrayNode enabledTools, String systemPrompt) {
+        return streamChat(messages, config, enabledTools);
+    }
 }

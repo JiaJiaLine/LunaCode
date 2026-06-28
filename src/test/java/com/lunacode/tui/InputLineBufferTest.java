@@ -39,12 +39,12 @@ class InputLineBufferTest {
     void consumeClearsContentAndCursor() {
         InputLineBuffer buffer = new InputLineBuffer();
 
-        buffer.insert('你');
+        buffer.insert('n');
         buffer.insert('a');
         buffer.moveLeft();
 
         assertEquals(1, buffer.columnsAfterCursor());
-        assertEquals("你a", buffer.consume());
+        assertEquals("na", buffer.consume());
         assertEquals("", buffer.content());
         assertEquals(0, buffer.cursorIndex());
     }
