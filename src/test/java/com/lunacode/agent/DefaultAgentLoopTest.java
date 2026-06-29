@@ -1,29 +1,28 @@
 package com.lunacode.agent;
 
-import com.lunacode.runtime.CancellationToken;
-
-import com.lunacode.runtime.AgentRunConfig;
-
-import com.lunacode.runtime.AgentMode;
-
-import com.lunacode.agent.event.AgentEvent;
-
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.lunacode.agent.event.AgentEvent;
+import com.lunacode.agent.execution.AgentToolRunner;
+import com.lunacode.agent.turn.AgentTurnRunner;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.config.ThinkingConfig;
 import com.lunacode.conversation.ApiMessage;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.DefaultConversationManager;
 import com.lunacode.conversation.MessageRole;
+import com.lunacode.prompt.PromptContextBuilder;
 import com.lunacode.provider.ChatProvider;
+import com.lunacode.runtime.AgentMode;
+import com.lunacode.runtime.AgentRunConfig;
+import com.lunacode.runtime.CancellationToken;
 import com.lunacode.stream.StreamEvent;
 import com.lunacode.tool.DefaultToolPermissionGateway;
 import com.lunacode.tool.DefaultToolRegistry;
 import com.lunacode.tool.ToolBatchPlanner;
 import com.lunacode.tool.ToolExecutor;
+import com.lunacode.tool.ToolRegistry;
 import com.lunacode.tool.ToolResult;
-import com.lunacode.tool.ToolUse;
 import org.junit.jupiter.api.Test;
 
 import java.net.URI;
@@ -50,7 +49,7 @@ class DefaultAgentLoopTest {
         registry.register(new StubReadTool());
         List<AgentEvent> events = new ArrayList<>();
         ToolExecutor executor = use -> ToolResult.success("tool result", Map.of());
-        DefaultAgentLoop loop = new DefaultAgentLoop(manager, provider, config(), registry, executor, new ToolBatchPlanner(), new DefaultToolPermissionGateway(Path.of(".").toAbsolutePath().normalize()));
+        DefaultAgentLoop loop = createLoop(manager, provider, registry, executor);
 
         loop.run(new AgentRequest("read", new AgentRunConfig(Path.of("."), AgentMode.DEFAULT, Path.of("plan.md"), 4, 3, Clock.systemUTC())), events::add, new CancellationToken());
 
@@ -68,12 +67,37 @@ class DefaultAgentLoopTest {
                 Stream.of(new StreamEvent.ToolUse("2", "Missing", mapper.createObjectNode()), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown()))
         ));
         List<AgentEvent> events = new ArrayList<>();
-        DefaultAgentLoop loop = new DefaultAgentLoop(manager, provider, config(), new DefaultToolRegistry(), use -> ToolResult.success("never", Map.of()), new ToolBatchPlanner(), new DefaultToolPermissionGateway(Path.of(".").toAbsolutePath().normalize()));
+        DefaultAgentLoop loop = createLoop(manager, provider, new DefaultToolRegistry(), use -> ToolResult.success("never", Map.of()));
 
         loop.run(new AgentRequest("bad", new AgentRunConfig(Path.of("."), AgentMode.DEFAULT, Path.of("plan.md"), 8, 1, Clock.systemUTC())), events::add, new CancellationToken());
 
         assertEquals(2, provider.calls);
         assertTrue(events.stream().anyMatch(event -> event instanceof AgentEvent.ErrorOccurred error && error.message().contains("未知工具")));
+    }
+
+    private DefaultAgentLoop createLoop(
+            ConversationManager manager,
+            CapturingProvider provider,
+            ToolRegistry registry,
+            ToolExecutor executor
+    ) {
+        Path workspaceRoot = Path.of(".").toAbsolutePath().normalize();
+        AgentToolRunner toolRunner = new AgentToolRunner(
+                registry,
+                executor,
+                new ToolBatchPlanner(),
+                new DefaultToolPermissionGateway(workspaceRoot)
+        );
+        AgentTurnRunner turnRunner = new AgentTurnRunner(manager, provider);
+        return new DefaultAgentLoop(
+                manager,
+                config(),
+                registry,
+                toolRunner,
+                turnRunner,
+                new LoopDecisionMaker(),
+                new PromptContextBuilder()
+        );
     }
 
     private ProviderConfig config() {
