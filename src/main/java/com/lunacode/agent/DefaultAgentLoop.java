@@ -11,16 +11,11 @@ import com.lunacode.conversation.ContentBlock;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.MessageRole;
 import com.lunacode.conversation.TokenUsage;
-import com.lunacode.interaction.PermissionConfirmationBroker;
 import com.lunacode.prompt.PromptBundle;
 import com.lunacode.prompt.PromptContextBuilder;
-import com.lunacode.provider.ChatProvider;
 import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.runtime.CancellationToken;
-import com.lunacode.tool.ToolBatchPlanner;
 import com.lunacode.tool.ToolExecutionRecord;
-import com.lunacode.tool.ToolExecutor;
-import com.lunacode.tool.ToolPermissionGateway;
 import com.lunacode.tool.ToolRegistry;
 
 import java.util.List;
@@ -37,33 +32,20 @@ public final class DefaultAgentLoop implements AgentLoop {
 
     public DefaultAgentLoop(
             ConversationManager conversationManager,
-            ChatProvider provider,
             ProviderConfig providerConfig,
             ToolRegistry toolRegistry,
-            ToolExecutor toolExecutor,
-            ToolBatchPlanner batchPlanner,
-            ToolPermissionGateway permissionGateway
-    ) {
-        this(conversationManager, provider, providerConfig, toolRegistry, toolExecutor, batchPlanner, permissionGateway, null);
-    }
-
-    public DefaultAgentLoop(
-            ConversationManager conversationManager,
-            ChatProvider provider,
-            ProviderConfig providerConfig,
-            ToolRegistry toolRegistry,
-            ToolExecutor toolExecutor,
-            ToolBatchPlanner batchPlanner,
-            ToolPermissionGateway permissionGateway,
-            PermissionConfirmationBroker confirmationBroker
+            AgentToolRunner toolRunner,
+            AgentTurnRunner turnRunner,
+            LoopDecisionMaker decisionMaker,
+            PromptContextBuilder promptContextBuilder
     ) {
         this.conversationManager = Objects.requireNonNull(conversationManager, "conversationManager");
         this.providerConfig = Objects.requireNonNull(providerConfig, "providerConfig");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
-        this.toolRunner = new AgentToolRunner(toolRegistry, toolExecutor, batchPlanner, permissionGateway, confirmationBroker);
-        this.turnRunner = new AgentTurnRunner(conversationManager, Objects.requireNonNull(provider, "provider"));
-        this.decisionMaker = new LoopDecisionMaker();
-        this.promptContextBuilder = new PromptContextBuilder();
+        this.toolRunner = Objects.requireNonNull(toolRunner, "toolRunner");
+        this.turnRunner = Objects.requireNonNull(turnRunner, "turnRunner");
+        this.decisionMaker = Objects.requireNonNull(decisionMaker, "decisionMaker");
+        this.promptContextBuilder = Objects.requireNonNull(promptContextBuilder, "promptContextBuilder");
     }
 
     @Override

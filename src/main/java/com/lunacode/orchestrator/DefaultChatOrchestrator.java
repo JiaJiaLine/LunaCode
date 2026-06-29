@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.lunacode.agent.AgentLoop;
 import com.lunacode.agent.AgentRequest;
 import com.lunacode.agent.DefaultAgentLoop;
+import com.lunacode.agent.LoopDecisionMaker;
+import com.lunacode.agent.execution.AgentToolRunner;
+import com.lunacode.agent.turn.AgentTurnRunner;
 import com.lunacode.agent.event.AgentEvent;
 import com.lunacode.agent.event.AgentEventSink;
 import com.lunacode.config.ProviderConfig;
@@ -11,6 +14,7 @@ import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.TokenUsage;
 import com.lunacode.interaction.BlockingPermissionConfirmationBroker;
 import com.lunacode.interaction.BlockingUserQuestionBroker;
+import com.lunacode.prompt.PromptContextBuilder;
 import com.lunacode.provider.ChatProvider;
 import com.lunacode.runtime.AgentMode;
 import com.lunacode.runtime.AgentRunConfig;
@@ -129,15 +133,32 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.status = new AtomicReference<>(StatusSnapshot.idle(config.protocol(), config.model()));
         this.workspaceRoot = Path.of("").toAbsolutePath().normalize();
         this.lastPlanFile = resolvePlanFile(workspaceRoot);
-        this.agentLoop = new DefaultAgentLoop(
-                conversationManager,
-                provider,
-                config,
-                safeRegistry,
+        this.agentLoop = createAgentLoop(conversationManager, provider, config, safeRegistry, toolExecutor);
+    }
+
+    private AgentLoop createAgentLoop(
+            ConversationManager conversationManager,
+            ChatProvider provider,
+            ProviderConfig config,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor
+    ) {
+        AgentToolRunner toolRunner = new AgentToolRunner(
+                toolRegistry,
                 toolExecutor,
                 new ToolBatchPlanner(),
                 new DefaultToolPermissionGateway(workspaceRoot),
                 permissionBroker
+        );
+        AgentTurnRunner turnRunner = new AgentTurnRunner(conversationManager, provider);
+        return new DefaultAgentLoop(
+                conversationManager,
+                config,
+                toolRegistry,
+                toolRunner,
+                turnRunner,
+                new LoopDecisionMaker(),
+                new PromptContextBuilder()
         );
     }
 
