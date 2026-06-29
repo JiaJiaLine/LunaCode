@@ -14,7 +14,7 @@ class LanternaLunaTuiTest {
     void printsPermissionStatusWithPermissionLabel() throws Exception {
         String output = printStatus(new StatusSnapshot("test", "model", null, null, "waiting_permission", "确认写入 src/Main.java", "WriteFile", "确认写入 src/Main.java"));
 
-        assertEquals("Luna [permission] 确认写入 src/Main.java" + System.lineSeparator(), output);
+        assertEquals("Luna [permission default] 确认写入 src/Main.java" + System.lineSeparator(), output);
     }
 
     @Test

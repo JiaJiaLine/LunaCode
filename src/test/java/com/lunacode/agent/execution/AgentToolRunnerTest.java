@@ -3,6 +3,7 @@ package com.lunacode.agent.execution;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lunacode.agent.event.AgentEvent;
+import com.lunacode.interaction.PermissionConfirmationAnswer;
 import com.lunacode.runtime.AgentMode;
 import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.runtime.CancellationToken;
@@ -44,7 +45,7 @@ class AgentToolRunnerTest {
                 },
                 null,
                 (toolUse, tool, mode, planFile) -> com.lunacode.tool.PermissionDecision.ASK,
-                request -> true
+                request -> PermissionConfirmationAnswer.ALLOW_ONCE
         );
 
         List<ToolExecutionRecord> records = runner.executeToolBatches(
@@ -73,7 +74,7 @@ class AgentToolRunnerTest {
                 },
                 null,
                 (toolUse, tool, mode, planFile) -> com.lunacode.tool.PermissionDecision.ASK,
-                request -> false
+                request -> PermissionConfirmationAnswer.DENY
         );
 
         List<ToolExecutionRecord> records = runner.executeToolBatches(

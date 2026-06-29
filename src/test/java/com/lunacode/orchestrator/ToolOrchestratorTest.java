@@ -75,8 +75,8 @@ class ToolOrchestratorTest {
     void secondToolUseContinuesThroughAgentLoop() {
         ConversationManager manager = new DefaultConversationManager();
         CapturingProvider provider = new CapturingProvider(List.of(
-                Stream.of(new StreamEvent.ToolUse("toolu_1", "ReadFile", mapper.createObjectNode()), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown())),
-                Stream.of(new StreamEvent.ToolUse("toolu_2", "ReadFile", mapper.createObjectNode()), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown())),
+                Stream.of(new StreamEvent.ToolUse("toolu_1", "ReadFile", mapper.createObjectNode().put("path", "pom.xml")), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown())),
+                Stream.of(new StreamEvent.ToolUse("toolu_2", "ReadFile", mapper.createObjectNode().put("path", "README.md")), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown())),
                 Stream.of(new StreamEvent.ContentDelta(0, "done"), new StreamEvent.MessageStop(com.lunacode.conversation.TokenUsage.unknown()))
         ));
         DefaultToolRegistry registry = new DefaultToolRegistry();

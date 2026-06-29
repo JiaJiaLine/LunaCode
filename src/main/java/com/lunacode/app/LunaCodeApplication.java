@@ -6,12 +6,17 @@ import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.DefaultConversationManager;
 import com.lunacode.orchestrator.DefaultChatOrchestrator;
+import com.lunacode.permission.DefaultPathSandbox;
+import com.lunacode.permission.PathSandbox;
 import com.lunacode.provider.ChatProvider;
 import com.lunacode.provider.ChatProviderFactory;
 import com.lunacode.tool.AskUserQuestionTool;
 import com.lunacode.tool.BashTool;
+import com.lunacode.tool.BubblewrapCommandSandbox;
+import com.lunacode.tool.CommandSandbox;
 import com.lunacode.tool.DefaultToolExecutor;
 import com.lunacode.tool.DefaultToolRegistry;
+import com.lunacode.tool.DirectCommandSandbox;
 import com.lunacode.tool.EditFileTool;
 import com.lunacode.tool.GlobTool;
 import com.lunacode.tool.GrepTool;
@@ -47,7 +52,14 @@ public class LunaCodeApplication {
         }
 
         Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
-        WorkspacePathResolver resolver = new WorkspacePathResolver(workspaceRoot);
+        PathSandbox pathSandbox;
+        try {
+            pathSandbox = new DefaultPathSandbox(workspaceRoot, config.sandbox());
+        } catch (IllegalArgumentException e) {
+            System.err.println("沙箱配置无效: " + e.getMessage());
+            return;
+        }
+        WorkspacePathResolver resolver = new WorkspacePathResolver(workspaceRoot, pathSandbox);
         DefaultToolRegistry registry = new DefaultToolRegistry();
         registry.register(new ReadFileTool(resolver));
         registry.register(new WriteFileTool(resolver));
@@ -59,7 +71,17 @@ public class LunaCodeApplication {
         SensitiveValueMasker masker = new SensitiveValueMasker();
         masker.add(config.apiKey());
         BlockingUserQuestionBroker questionBroker = new BlockingUserQuestionBroker();
-        ToolExecutionContext toolContext = new ToolExecutionContext(workspaceRoot, Duration.ofSeconds(30), 20_000, masker, questionBroker);
+        CommandSandbox commandSandbox = isLinux() ? new BubblewrapCommandSandbox() : new DirectCommandSandbox();
+        ToolExecutionContext toolContext = new ToolExecutionContext(
+                workspaceRoot,
+                Duration.ofSeconds(30),
+                20_000,
+                masker,
+                questionBroker,
+                commandSandbox,
+                config.sandbox(),
+                pathSandbox.roots()
+        );
         DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);
 
         AtomicReference<LanternaLunaTui> tuiRef = new AtomicReference<>();
@@ -80,5 +102,9 @@ public class LunaCodeApplication {
         LanternaLunaTui tui = new LanternaLunaTui(conversationManager, orchestrator);
         tuiRef.set(tui);
         tui.start();
+    }
+
+    private boolean isLinux() {
+        return System.getProperty("os.name", "").toLowerCase().contains("linux");
     }
 }

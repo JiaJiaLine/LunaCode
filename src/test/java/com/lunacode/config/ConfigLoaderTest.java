@@ -101,6 +101,30 @@ class ConfigLoaderTest {
         assertTrue(error.getMessage().contains("OPENAI_API_KEY"));
     }
 
+
+    @Test
+    void loadsPermissionAndSandboxConfig() throws Exception {
+        Path config = writeConfig("""
+                protocol: openai
+                model: gpt-test
+                base_url: https://api.openai.com
+                api_key: key-test
+                permissions:
+                  mode: acceptEdits
+                sandbox:
+                  network_enabled: true
+                  extra_roots:
+                    - name: cache
+                      path: /tmp/lunacode-cache
+                """);
+
+        ProviderConfig loaded = new ConfigLoader().load(config);
+
+        assertEquals(com.lunacode.permission.PermissionMode.ACCEPT_EDITS, loaded.permissions().mode());
+        assertTrue(loaded.sandbox().networkEnabled());
+        assertEquals("cache", loaded.sandbox().extraRoots().get(0).name());
+        assertEquals("/tmp/lunacode-cache", loaded.sandbox().extraRoots().get(0).path());
+    }
     private Path writeConfig(String content) throws Exception {
         Path config = tempDir.resolve("config.yaml");
         Files.writeString(config, content);

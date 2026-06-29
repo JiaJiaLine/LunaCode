@@ -9,7 +9,7 @@ public final class BlockingPermissionConfirmationBroker implements PermissionCon
     private final AtomicReference<PendingConfirmation> pending = new AtomicReference<>();
 
     @Override
-    public boolean confirm(PermissionConfirmationRequest request) {
+    public PermissionConfirmationAnswer confirm(PermissionConfirmationRequest request) {
         Objects.requireNonNull(request, "request");
         PendingConfirmation next = new PendingConfirmation(request, new CompletableFuture<>());
         if (!pending.compareAndSet(null, next)) {
@@ -33,27 +33,37 @@ public final class BlockingPermissionConfirmationBroker implements PermissionCon
 
     public boolean answer(String answer) {
         PendingConfirmation current = pending.get();
-        return current != null && current.answer().complete(isApproval(answer));
+        return current != null && current.answer().complete(parseAnswer(answer));
     }
 
     public void cancelPending() {
         PendingConfirmation current = pending.getAndSet(null);
         if (current != null) {
-            current.answer().complete(false);
+            current.answer().complete(PermissionConfirmationAnswer.DENY);
         }
     }
 
-    private boolean isApproval(String answer) {
+    private PermissionConfirmationAnswer parseAnswer(String answer) {
         String normalized = answer == null ? "" : answer.strip().toLowerCase(Locale.ROOT);
-        return normalized.equals("y")
+        if (normalized.equals("always")
+                || normalized.equals("allow always")
+                || normalized.equals("始终允许")
+                || normalized.equals("永久允许")) {
+            return PermissionConfirmationAnswer.ALLOW_ALWAYS;
+        }
+        if (normalized.equals("y")
                 || normalized.equals("yes")
                 || normalized.equals("ok")
                 || normalized.equals("approve")
                 || normalized.equals("allow")
                 || normalized.equals("确认")
                 || normalized.equals("允许")
-                || normalized.equals("同意");
+                || normalized.equals("同意")
+                || normalized.equals("本次允许")) {
+            return PermissionConfirmationAnswer.ALLOW_ONCE;
+        }
+        return PermissionConfirmationAnswer.DENY;
     }
 
-    private record PendingConfirmation(PermissionConfirmationRequest request, CompletableFuture<Boolean> answer) {}
+    private record PendingConfirmation(PermissionConfirmationRequest request, CompletableFuture<PermissionConfirmationAnswer> answer) {}
 }

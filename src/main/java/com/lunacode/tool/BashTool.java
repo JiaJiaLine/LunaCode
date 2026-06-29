@@ -7,7 +7,6 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -50,7 +49,16 @@ public class BashTool implements Tool {
         long started = System.nanoTime();
         Process process = null;
         try {
-            process = new ProcessBuilder(shellCommand(command))
+            CommandSandbox.PreparedCommand prepared = context.commandSandbox().wrapShellCommand(
+                    command,
+                    context.workspaceRoot(),
+                    context.sandboxRoots(),
+                    context.sandboxConfig()
+            );
+            if (prepared.isError()) {
+                return ToolResult.error(prepared.error(), Map.of("errorType", "command_sandbox_error"));
+            }
+            process = new ProcessBuilder(prepared.command())
                     .directory(context.workspaceRoot().toFile())
                     .redirectInput(ProcessBuilder.Redirect.PIPE)
                     .start();
@@ -71,15 +79,6 @@ public class BashTool implements Tool {
             }
             return ToolResult.error("命令执行失败: " + e.getMessage(), Map.of("errorType", "command_error"));
         }
-    }
-
-    private List<String> shellCommand(String command) {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        if (os.contains("win")) {
-            String shell = System.getenv().getOrDefault("ComSpec", "cmd.exe");
-            return List.of(shell, "/d", "/c", command);
-        }
-        return List.of("/bin/sh", "-lc", command);
     }
 
     private CompletableFuture<String> readAsync(InputStream stream) {

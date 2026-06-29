@@ -253,7 +253,9 @@ public class LanternaLunaTui implements LunaTui {
                 || "waiting_permission".equals(status.state())
                 || "tool_running".equals(status.state())
                 || "cancelled".equals(status.state())
-                || "error".equals(status.state());
+                || "error".equals(status.state())
+                || "warning".equals(status.state())
+                || ("idle".equals(status.state()) && status.errorSummary() != null && !status.errorSummary().isBlank());
     }
 
     private void printStatus(PrintWriter writer, StatusSnapshot status) {
@@ -263,13 +265,17 @@ public class LanternaLunaTui implements LunaTui {
         if ("waiting_user".equals(status.state())) {
             writer.println("Luna [question] " + safeStatusMessage(status));
         } else if ("waiting_permission".equals(status.state())) {
-            writer.println("Luna [permission] " + safeStatusMessage(status));
+            writer.println("Luna [permission " + status.permissionMode().configValue() + "] " + safeStatusMessage(status));
         } else if ("tool_running".equals(status.state())) {
             writer.println("Luna [tool] " + safeStatusMessage(status));
         } else if ("cancelled".equals(status.state())) {
             writer.println("Luna [cancelled] " + safeStatusMessage(status));
         } else if ("error".equals(status.state())) {
             writer.println("Luna [error] " + safeStatusMessage(status));
+        } else if ("warning".equals(status.state())) {
+            writer.println("Luna [warning] " + safeStatusMessage(status));
+        } else if ("idle".equals(status.state())) {
+            writer.println("Luna [info] " + safeStatusMessage(status));
         }
     }
 
