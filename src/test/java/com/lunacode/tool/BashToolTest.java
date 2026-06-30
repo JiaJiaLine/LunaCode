@@ -34,6 +34,18 @@ class BashToolTest {
     }
 
     @Test
+    void blacklistedCommandNeverStartsProcess() {
+        BashTool tool = new BashTool();
+        Path output = tempDir.resolve("blocked.txt");
+
+        ToolResult result = tool.execute(context(tempDir, Duration.ofSeconds(3), new SensitiveValueMasker()),
+                mapper.createObjectNode().put("command", "echo should-not-run > blocked.txt && rm -rf /"));
+
+        assertTrue(result.isError());
+        assertEquals("blacklisted_command", result.metadata().get("errorType"));
+        assertFalse(Files.exists(output));
+    }
+    @Test
     void masksSensitiveOutput() {
         SensitiveValueMasker masker = new SensitiveValueMasker(java.util.List.of("SECRET_TOKEN"));
         BashTool tool = new BashTool();

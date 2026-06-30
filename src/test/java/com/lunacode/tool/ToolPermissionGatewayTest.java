@@ -17,7 +17,7 @@ class ToolPermissionGatewayTest {
 
     @Test
     void defaultMatrixAllowsReadsAndAsksForSideEffects() {
-        assertEquals(PermissionDecision.ALLOW, gateway.decide(new ToolUse("1", "ReadFile", mapper.createObjectNode()), new StubTool("ReadFile", true, false), AgentMode.DEFAULT, root.resolve("plan.md")));
+        assertEquals(PermissionDecision.ALLOW, gateway.decide(new ToolUse("1", "ReadFile", mapper.createObjectNode().put("path", "pom.xml")), new StubTool("ReadFile", true, false), AgentMode.DEFAULT, root.resolve("plan.md")));
         assertEquals(PermissionDecision.ASK, gateway.decide(new ToolUse("2", "WriteFile", mapper.createObjectNode().put("path", "x.txt")), new StubTool("WriteFile", false, true), AgentMode.DEFAULT, root.resolve("plan.md")));
         assertEquals(PermissionDecision.ASK, gateway.decide(new ToolUse("3", "Bash", mapper.createObjectNode()), new StubTool("Bash", false, true), AgentMode.PLAN, root.resolve("plan.md")));
     }
@@ -25,7 +25,7 @@ class ToolPermissionGatewayTest {
     @Test
     void planModeAllowsOnlyPlanFileAndAskUserQuestion() {
         Path plan = root.resolve(".lunacode/plan.md");
-        assertEquals(PermissionDecision.ALLOW, gateway.decide(new ToolUse("1", "WriteFile", mapper.createObjectNode().put("path", ".lunacode/plan.md")), new StubTool("WriteFile", false, true), AgentMode.PLAN, plan));
+        assertEquals(PermissionDecision.ASK, gateway.decide(new ToolUse("1", "WriteFile", mapper.createObjectNode().put("path", ".lunacode/plan.md")), new StubTool("WriteFile", false, true), AgentMode.PLAN, plan));
         assertEquals(PermissionDecision.ASK, gateway.decide(new ToolUse("2", "WriteFile", mapper.createObjectNode().put("path", "src/Main.java")), new StubTool("WriteFile", false, true), AgentMode.PLAN, plan));
         assertEquals(PermissionDecision.ALLOW, gateway.decide(new ToolUse("3", "AskUserQuestion", mapper.createObjectNode()), new StubTool("AskUserQuestion", true, false), AgentMode.PLAN, plan));
         assertEquals(PermissionDecision.DENY, gateway.decide(new ToolUse("4", "AskUserQuestion", mapper.createObjectNode()), new StubTool("AskUserQuestion", true, false), AgentMode.DEFAULT, plan));

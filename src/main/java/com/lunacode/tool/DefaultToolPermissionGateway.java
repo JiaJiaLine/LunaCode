@@ -1,60 +1,75 @@
 package com.lunacode.tool;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.lunacode.config.SandboxConfig;
+import com.lunacode.permission.BashPathScanner;
+import com.lunacode.permission.DangerousCommandBlacklist;
+import com.lunacode.permission.DefaultPathSandbox;
+import com.lunacode.permission.DefaultPermissionEngine;
+import com.lunacode.permission.PathSandbox;
+import com.lunacode.permission.PermissionEvaluation;
+import com.lunacode.permission.PermissionEvaluationRequest;
+import com.lunacode.permission.PermissionModePolicy;
+import com.lunacode.permission.PermissionRuleMatcher;
+import com.lunacode.permission.PermissionRuleStore;
+import com.lunacode.permission.PermissionTargetExtractor;
+import com.lunacode.permission.SensitivePathPolicy;
+import com.lunacode.permission.YamlPermissionRuleStore;
 import com.lunacode.runtime.AgentMode;
+import com.lunacode.runtime.AgentRunConfig;
 
 import java.nio.file.Path;
 import java.util.Objects;
 
 public final class DefaultToolPermissionGateway implements ToolPermissionGateway {
     private final Path workspaceRoot;
+    private final DefaultPermissionEngine permissionEngine;
 
     public DefaultToolPermissionGateway(Path workspaceRoot) {
+        this(workspaceRoot, defaultEngine(workspaceRoot));
+    }
+
+    public DefaultToolPermissionGateway(Path workspaceRoot, DefaultPermissionEngine permissionEngine) {
         this.workspaceRoot = Objects.requireNonNull(workspaceRoot, "workspaceRoot").toAbsolutePath().normalize();
+        this.permissionEngine = Objects.requireNonNull(permissionEngine, "permissionEngine");
+    }
+
+    @Override
+    public PermissionEvaluation evaluate(ToolUse toolUse, Tool tool, AgentRunConfig config) {
+        return permissionEngine.evaluate(new PermissionEvaluationRequest(
+                toolUse,
+                tool,
+                config.mode(),
+                config.permissionMode(),
+                config.planFile()
+        ));
     }
 
     @Override
     public PermissionDecision decide(ToolUse toolUse, Tool tool, AgentMode mode, Path planFile) {
-        if (tool == null) {
-            return PermissionDecision.DENY;
-        }
-        if ("AskUserQuestion".equals(tool.name())) {
-            return mode == AgentMode.PLAN ? PermissionDecision.ALLOW : PermissionDecision.DENY;
-        }
-        if (mode == AgentMode.PLAN && isPlanFileWrite(toolUse, tool, planFile)) {
-            return PermissionDecision.ALLOW;
-        }
-        if (tool.isReadOnly() && !tool.isDestructive()) {
-            return PermissionDecision.ALLOW;
-        }
-        if ("Bash".equals(tool.name()) || tool.isDestructive()) {
-            return PermissionDecision.ASK;
-        }
-        return PermissionDecision.ALLOW;
+        AgentRunConfig config = new AgentRunConfig(workspaceRoot, mode, planFile, 8, 3, java.time.Clock.systemDefaultZone());
+        return toLegacyDecision(evaluate(toolUse, tool, config).decision());
     }
 
-    private boolean isPlanFileWrite(ToolUse toolUse, Tool tool, Path planFile) {
-        if (!"WriteFile".equals(tool.name()) && !"EditFile".equals(tool.name())) {
-            return false;
-        }
-        Path target = targetPath(toolUse.input());
-        if (target == null || planFile == null) {
-            return false;
-        }
-        Path normalizedTarget = target.isAbsolute() ? target.toAbsolutePath().normalize() : workspaceRoot.resolve(target).normalize();
-        Path normalizedPlan = planFile.isAbsolute() ? planFile.toAbsolutePath().normalize() : workspaceRoot.resolve(planFile).normalize();
-        return normalizedTarget.equals(normalizedPlan);
+    private PermissionDecision toLegacyDecision(PermissionEvaluation.Decision decision) {
+        return switch (decision) {
+            case ALLOW -> PermissionDecision.ALLOW;
+            case ASK -> PermissionDecision.ASK;
+            case DENY -> PermissionDecision.DENY;
+        };
     }
 
-    private Path targetPath(JsonNode input) {
-        if (input == null) {
-            return null;
-        }
-        for (String name : new String[]{"path", "file_path"}) {
-            if (input.hasNonNull(name) && !input.path(name).asText().isBlank()) {
-                return Path.of(input.path(name).asText());
-            }
-        }
-        return null;
+    private static DefaultPermissionEngine defaultEngine(Path workspaceRoot) {
+        Path root = workspaceRoot.toAbsolutePath().normalize();
+        PathSandbox pathSandbox = new DefaultPathSandbox(root, SandboxConfig.defaults());
+        PermissionRuleStore store = new YamlPermissionRuleStore(root);
+        SensitivePathPolicy sensitivePathPolicy = new SensitivePathPolicy();
+        return new DefaultPermissionEngine(
+                store,
+                new PermissionTargetExtractor(pathSandbox, new BashPathScanner(), sensitivePathPolicy),
+                new PermissionRuleMatcher(),
+                new PermissionModePolicy(),
+                new DangerousCommandBlacklist()
+        );
     }
+
 }

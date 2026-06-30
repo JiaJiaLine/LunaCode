@@ -3,11 +3,13 @@ package com.lunacode.config;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.lunacode.permission.PermissionMode;
 
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Matcher;
@@ -45,7 +47,9 @@ public class ConfigLoader {
         String apiKey = resolveApiKey(requireText(raw.apiKey(), "api_key"));
         ThinkingConfig thinking = toThinkingConfig(raw.thinking());
         AgentConfig agent = toAgentConfig(raw.agent());
-        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent);
+        PermissionConfig permissions = toPermissionConfig(raw.permissions());
+        SandboxConfig sandbox = toSandboxConfig(raw.sandbox());
+        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox);
     }
 
     private String requireText(String value, String field) {
@@ -102,13 +106,37 @@ public class ConfigLoader {
         return new AgentConfig(maxIterations, maxUnknownTools, planFile);
     }
 
+    private PermissionConfig toPermissionConfig(RawPermissions raw) {
+        if (raw == null) {
+            return PermissionConfig.defaults();
+        }
+        try {
+            return new PermissionConfig(PermissionMode.fromConfig(raw.mode()));
+        } catch (IllegalArgumentException e) {
+            throw new ConfigException("permissions.mode 无效: " + raw.mode(), e);
+        }
+    }
+
+    private SandboxConfig toSandboxConfig(RawSandbox raw) {
+        if (raw == null) {
+            return SandboxConfig.defaults();
+        }
+        boolean networkEnabled = raw.networkEnabled() != null && raw.networkEnabled();
+        List<SandboxRootConfig> extraRoots = raw.extraRoots() == null ? List.of() : raw.extraRoots().stream()
+                .map(root -> new SandboxRootConfig(root.name(), root.path()))
+                .toList();
+        return new SandboxConfig(networkEnabled, extraRoots);
+    }
+
     private record RawConfig(
             String protocol,
             String model,
             @JsonProperty("base_url") String baseUrl,
             @JsonProperty("api_key") String apiKey,
             RawThinking thinking,
-            RawAgent agent
+            RawAgent agent,
+            RawPermissions permissions,
+            RawSandbox sandbox
     ) {}
 
     private record RawThinking(
@@ -120,6 +148,20 @@ public class ConfigLoader {
             @JsonProperty("max_iterations") Integer maxIterations,
             @JsonProperty("max_consecutive_unknown_tools") Integer maxConsecutiveUnknownTools,
             @JsonProperty("plan_file") String planFile
+    ) {}
+
+    private record RawPermissions(
+            String mode
+    ) {}
+
+    private record RawSandbox(
+            @JsonProperty("network_enabled") Boolean networkEnabled,
+            @JsonProperty("extra_roots") List<RawSandboxRoot> extraRoots
+    ) {}
+
+    private record RawSandboxRoot(
+            String name,
+            String path
     ) {}
 
     public static class ConfigException extends RuntimeException {

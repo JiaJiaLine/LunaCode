@@ -29,6 +29,7 @@ public class LanternaLunaTui implements LunaTui {
     private final Set<String> startedMessages = new HashSet<>();
     private final Set<String> finishedMessages = new HashSet<>();
     private final Map<String, Integer> printedLengths = new HashMap<>();
+    private String lastPrintedStatusKey;
     private Terminal terminal;
     private Attributes originalAttributes;
     private volatile boolean running;
@@ -73,7 +74,11 @@ public class LanternaLunaTui implements LunaTui {
         for (InternalMessage message : messages) {
             changed |= renderMessage(writer, message);
         }
-        if (changed || shouldPrintStatus(status)) {
+        boolean statusPrintable = shouldPrintStatus(status);
+        if (!statusPrintable) {
+            lastPrintedStatusKey = null;
+        }
+        if (changed || statusPrintable) {
             printStatus(writer, status);
         }
         if (!"responding".equals(status.state()) && !"tool_running".equals(status.state())) {
@@ -253,26 +258,48 @@ public class LanternaLunaTui implements LunaTui {
                 || "waiting_permission".equals(status.state())
                 || "tool_running".equals(status.state())
                 || "cancelled".equals(status.state())
-                || "error".equals(status.state());
+                || "error".equals(status.state())
+                || "warning".equals(status.state())
+                || ("idle".equals(status.state()) && status.errorSummary() != null && !status.errorSummary().isBlank());
     }
 
     private void printStatus(PrintWriter writer, StatusSnapshot status) {
         if (!shouldPrintStatus(status)) {
             return;
         }
+        String statusKey = statusPrintKey(status);
+        if (statusKey.equals(lastPrintedStatusKey)) {
+            return;
+        }
+        lastPrintedStatusKey = statusKey;
         if ("waiting_user".equals(status.state())) {
             writer.println("Luna [question] " + safeStatusMessage(status));
         } else if ("waiting_permission".equals(status.state())) {
-            writer.println("Luna [permission] " + safeStatusMessage(status));
+            writer.println("Luna [permission " + status.permissionMode().configValue() + "] " + safeStatusMessage(status));
         } else if ("tool_running".equals(status.state())) {
             writer.println("Luna [tool] " + safeStatusMessage(status));
         } else if ("cancelled".equals(status.state())) {
             writer.println("Luna [cancelled] " + safeStatusMessage(status));
         } else if ("error".equals(status.state())) {
             writer.println("Luna [error] " + safeStatusMessage(status));
+        } else if ("warning".equals(status.state())) {
+            writer.println("Luna [warning] " + safeStatusMessage(status));
+        } else if ("idle".equals(status.state())) {
+            writer.println("Luna [info] " + safeStatusMessage(status));
         }
     }
 
+    private String statusPrintKey(StatusSnapshot status) {
+        return status.state()
+                + "\u0000" + status.permissionMode().configValue()
+                + "\u0000" + statusText(status.errorSummary())
+                + "\u0000" + statusText(status.toolName())
+                + "\u0000" + statusText(status.toolSummary());
+    }
+
+    private String statusText(String value) {
+        return value == null ? "" : value;
+    }
     private String safeStatusMessage(StatusSnapshot status) {
         String message = status.errorSummary();
         if ((message == null || message.isBlank()) && status.toolSummary() != null) {

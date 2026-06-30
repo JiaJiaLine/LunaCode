@@ -1,19 +1,39 @@
 package com.lunacode.tool;
 
+import com.lunacode.permission.PathIntent;
+import com.lunacode.permission.PathSandbox;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
 public class WorkspacePathResolver {
     private final Path workspaceRoot;
+    private final PathSandbox pathSandbox;
 
     public WorkspacePathResolver(Path workspaceRoot) {
+        this(workspaceRoot, null);
+    }
+
+    public WorkspacePathResolver(Path workspaceRoot, PathSandbox pathSandbox) {
         this.workspaceRoot = workspaceRoot.toAbsolutePath().normalize();
+        this.pathSandbox = pathSandbox;
     }
 
     public Path resolveInsideWorkspace(String requestedPath) {
+        return resolveInsideWorkspace(requestedPath, PathIntent.READ);
+    }
+
+    public Path resolveInsideWorkspace(String requestedPath, PathIntent intent) {
         if (requestedPath == null || requestedPath.isBlank()) {
             throw new IllegalArgumentException("路径不能为空");
+        }
+        if (pathSandbox != null) {
+            PathSandbox.Result result = pathSandbox.validate(requestedPath, intent == null ? PathIntent.READ : intent);
+            if (!result.allowed()) {
+                throw new IllegalArgumentException(result.reason());
+            }
+            return result.path().realPath();
         }
         Path raw = Path.of(requestedPath);
         Path resolved = raw.isAbsolute() ? raw.normalize() : workspaceRoot.resolve(raw).normalize();
@@ -47,6 +67,10 @@ public class WorkspacePathResolver {
     }
 
     public String relativize(Path path) {
-        return workspaceRoot.relativize(path.toAbsolutePath().normalize()).toString().replace('\\', '/');
+        Path normalized = path.toAbsolutePath().normalize();
+        if (normalized.startsWith(workspaceRoot)) {
+            return workspaceRoot.relativize(normalized).toString().replace('\\', '/');
+        }
+        return normalized.toString().replace('\\', '/');
     }
 }

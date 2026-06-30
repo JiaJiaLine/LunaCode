@@ -5,3 +5,10 @@ api_key: ${ANTHROPIC_API_KEY}
 thinking:
   enabled: true
   budget_tokens: 4096
+permissions:
+  mode: default
+sandbox:
+  network_enabled: false
+  extra_roots:
+    - name: shared-cache
+      path: /tmp/lunacode-cache
