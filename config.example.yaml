@@ -1,4 +1,4 @@
-protocol: anthropic
+﻿protocol: anthropic
 model: claude-sonnet-4-20250514
 base_url: https://api.anthropic.com
 api_key: ${ANTHROPIC_API_KEY}
@@ -12,3 +12,18 @@ sandbox:
   extra_roots:
     - name: shared-cache
       path: /tmp/lunacode-cache
+
+# MCP 配置支持两层合并：先读取用户级 ~/.lunacode/config.yaml，再读取当前项目配置。
+# 同名 server 由项目级完整覆盖用户级；不同名 server 会并集合并。
+mcp:
+  servers:
+    local_test:
+      command: node
+      args:
+        - toolTest/mcp-test-server.js
+      env:
+        TEST_TOKEN: ${LUNACODE_MCP_TEST_TOKEN}
+    remote_docs:
+      url: https://mcp.example.com/mcp
+      headers:
+        Authorization: Bearer ${REMOTE_MCP_TOKEN}

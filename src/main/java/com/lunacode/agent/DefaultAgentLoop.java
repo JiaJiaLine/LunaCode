@@ -70,7 +70,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                     config,
                     turnIndex,
                     conversationManager.toAPIFormat(),
-                    toolRegistry.toAPIFormat(config.mode())
+                    toolRegistry.declarationsForModel(config.mode())
             );
             AgentTurnInput input = new AgentTurnInput(
                     turnIndex,

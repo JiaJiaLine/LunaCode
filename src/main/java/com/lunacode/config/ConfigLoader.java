@@ -8,7 +8,10 @@ import com.lunacode.permission.PermissionMode;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,14 +22,22 @@ public class ConfigLoader {
     private static final Pattern ENV_PATTERN = Pattern.compile("^\\$\\{([A-Za-z_][A-Za-z0-9_]*)}$");
     private final ObjectMapper mapper;
     private final Map<String, String> environment;
+    private final Path userConfigPath;
+    private final EnvironmentValueExpander environmentValueExpander;
 
     public ConfigLoader() {
         this(System.getenv());
     }
 
     public ConfigLoader(Map<String, String> environment) {
+        this(environment, defaultUserConfigPath());
+    }
+
+    public ConfigLoader(Map<String, String> environment, Path userConfigPath) {
         this.mapper = new ObjectMapper(new YAMLFactory());
         this.environment = Objects.requireNonNull(environment, "environment");
+        this.userConfigPath = userConfigPath;
+        this.environmentValueExpander = new EnvironmentValueExpander(environment);
     }
 
     public ProviderConfig load(Path path) {
@@ -49,7 +60,25 @@ public class ConfigLoader {
         AgentConfig agent = toAgentConfig(raw.agent());
         PermissionConfig permissions = toPermissionConfig(raw.permissions());
         SandboxConfig sandbox = toSandboxConfig(raw.sandbox());
-        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox);
+        McpConfig mcp = toMergedMcpConfig(readUserMcp(path), raw.mcp());
+        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp);
+    }
+
+    private RawMcp readUserMcp(Path projectConfigPath) {
+        if (userConfigPath == null || !Files.exists(userConfigPath)) {
+            return null;
+        }
+        Path normalizedUserPath = userConfigPath.toAbsolutePath().normalize();
+        Path normalizedProjectPath = projectConfigPath == null ? null : projectConfigPath.toAbsolutePath().normalize();
+        if (normalizedUserPath.equals(normalizedProjectPath)) {
+            return null;
+        }
+        try {
+            RawConfig raw = mapper.readValue(normalizedUserPath.toFile(), RawConfig.class);
+            return raw.mcp();
+        } catch (IOException e) {
+            throw new ConfigException("无法读取用户级 MCP 配置: " + normalizedUserPath, e);
+        }
     }
 
     private String requireText(String value, String field) {
@@ -68,6 +97,18 @@ public class ConfigLoader {
             return uri;
         } catch (URISyntaxException e) {
             throw new ConfigException("base_url 格式无效", e);
+        }
+    }
+
+    private URI parseMcpUri(String value) {
+        try {
+            URI uri = new URI(value);
+            if (uri.getScheme() == null) {
+                throw new McpServerParseException("url 必须是完整 URL");
+            }
+            return uri;
+        } catch (URISyntaxException e) {
+            throw new McpServerParseException("url 格式无效");
         }
     }
 
@@ -128,6 +169,138 @@ public class ConfigLoader {
         return new SandboxConfig(networkEnabled, extraRoots);
     }
 
+    private McpConfig toMergedMcpConfig(RawMcp userMcp, RawMcp projectMcp) {
+        LinkedHashMap<String, McpServerConfig> servers = new LinkedHashMap<>();
+        List<String> warnings = new ArrayList<>();
+        parseMcpServers("用户级", userMcp, servers, warnings, false);
+        parseMcpServers("项目级", projectMcp, servers, warnings, true);
+        return new McpConfig(servers, warnings);
+    }
+
+    private void parseMcpServers(
+            String source,
+            RawMcp rawMcp,
+            LinkedHashMap<String, McpServerConfig> servers,
+            List<String> warnings,
+            boolean projectOverrides
+    ) {
+        if (rawMcp == null || rawMcp.servers() == null || rawMcp.servers().isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, RawMcpServer> entry : rawMcp.servers().entrySet()) {
+            String serverName = entry.getKey() == null ? "" : entry.getKey().strip();
+            if (projectOverrides) {
+                servers.remove(serverName);
+            }
+            try {
+                servers.put(serverName, parseMcpServer(serverName, entry.getValue()));
+            } catch (McpServerParseException e) {
+                warnings.add(source + " MCP Server `" + safeServerName(serverName) + "` 已跳过: " + e.getMessage());
+            }
+        }
+    }
+
+    private McpServerConfig parseMcpServer(String serverName, RawMcpServer raw) {
+        if (serverName == null || serverName.isBlank()) {
+            throw new McpServerParseException("Server 名不能为空");
+        }
+        if (raw == null) {
+            throw new McpServerParseException("配置为空");
+        }
+        boolean hasCommand = hasText(raw.command());
+        boolean hasUrl = hasText(raw.url());
+        if (hasCommand == hasUrl) {
+            throw new McpServerParseException("必须且只能声明 command 或 url");
+        }
+        if (hasCommand) {
+            return parseStdioServer(serverName, raw);
+        }
+        return parseHttpServer(serverName, raw);
+    }
+
+    private McpStdioServerConfig parseStdioServer(String serverName, RawMcpServer raw) {
+        String command = expandMcpValue("command", raw.command());
+        if (!hasText(command)) {
+            throw new McpServerParseException("command 展开后为空");
+        }
+        List<String> args = raw.args() == null ? List.of() : raw.args().stream()
+                .map(value -> expandMcpValue("args", value))
+                .toList();
+        LinkedHashMap<String, String> env = new LinkedHashMap<>();
+        LinkedHashMap<String, String> sensitive = new LinkedHashMap<>();
+        if (raw.env() != null) {
+            for (Map.Entry<String, String> entry : raw.env().entrySet()) {
+                String key = requireMcpMapKey(entry.getKey(), "env");
+                String value = expandMcpValue("env." + key, entry.getValue());
+                env.put(key, value);
+                sensitive.put("env." + key, value);
+            }
+        }
+        if (environmentValueExpander.containsPlaceholder(raw.command())) {
+            sensitive.put("command", command);
+        }
+        for (int i = 0; raw.args() != null && i < raw.args().size(); i++) {
+            String rawArg = raw.args().get(i);
+            if (environmentValueExpander.containsPlaceholder(rawArg)) {
+                sensitive.put("args." + i, args.get(i));
+            }
+        }
+        return new McpStdioServerConfig(serverName, command, args, env, sensitive);
+    }
+
+    private McpHttpServerConfig parseHttpServer(String serverName, RawMcpServer raw) {
+        String urlText = expandMcpValue("url", raw.url());
+        URI url = parseMcpUri(urlText);
+        LinkedHashMap<String, String> headers = new LinkedHashMap<>();
+        LinkedHashMap<String, String> sensitive = new LinkedHashMap<>();
+        if (raw.headers() != null) {
+            for (Map.Entry<String, String> entry : raw.headers().entrySet()) {
+                String key = requireMcpMapKey(entry.getKey(), "headers");
+                String value = expandMcpValue("headers." + key, entry.getValue());
+                headers.put(key, value);
+                sensitive.put("headers." + key, value);
+            }
+        }
+        if (environmentValueExpander.containsPlaceholder(raw.url())) {
+            sensitive.put("url", urlText);
+        }
+        return new McpHttpServerConfig(serverName, url, headers, sensitive);
+    }
+
+    private String expandMcpValue(String field, String value) {
+        if (value == null) {
+            throw new McpServerParseException(field + " 不能为空");
+        }
+        try {
+            return environmentValueExpander.expand(value);
+        } catch (EnvironmentValueExpander.MissingEnvironmentValueException e) {
+            throw new McpServerParseException(field + " 引用的 " + e.getMessage());
+        }
+    }
+
+    private String requireMcpMapKey(String key, String field) {
+        if (key == null || key.isBlank()) {
+            throw new McpServerParseException(field + " 中存在空 key");
+        }
+        return key.strip();
+    }
+
+    private String safeServerName(String name) {
+        if (name == null || name.isBlank()) {
+            return "<未命名>";
+        }
+        String oneLine = name.replaceAll("\\s+", " ").strip();
+        return oneLine.length() <= 80 ? oneLine : oneLine.substring(0, 80) + "...";
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private static Path defaultUserConfigPath() {
+        return Path.of(System.getProperty("user.home"), ".lunacode", "config.yaml");
+    }
+
     private record RawConfig(
             String protocol,
             String model,
@@ -136,7 +309,8 @@ public class ConfigLoader {
             RawThinking thinking,
             RawAgent agent,
             RawPermissions permissions,
-            RawSandbox sandbox
+            RawSandbox sandbox,
+            RawMcp mcp
     ) {}
 
     private record RawThinking(
@@ -163,6 +337,24 @@ public class ConfigLoader {
             String name,
             String path
     ) {}
+
+    private record RawMcp(
+            Map<String, RawMcpServer> servers
+    ) {}
+
+    private record RawMcpServer(
+            String command,
+            List<String> args,
+            Map<String, String> env,
+            String url,
+            Map<String, String> headers
+    ) {}
+
+    private static class McpServerParseException extends RuntimeException {
+        private McpServerParseException(String message) {
+            super(message);
+        }
+    }
 
     public static class ConfigException extends RuntimeException {
         public ConfigException(String message) {

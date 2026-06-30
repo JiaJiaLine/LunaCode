@@ -10,14 +10,19 @@ public record ProviderConfig(
         ThinkingConfig thinking,
         AgentConfig agent,
         PermissionConfig permissions,
-        SandboxConfig sandbox
+        SandboxConfig sandbox,
+        McpConfig mcp
 ) {
     public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking) {
-        this(protocol, model, baseUrl, apiKey, thinking, AgentConfig.defaults(), PermissionConfig.defaults(), SandboxConfig.defaults());
+        this(protocol, model, baseUrl, apiKey, thinking, AgentConfig.defaults(), PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty());
     }
 
     public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking, AgentConfig agent) {
-        this(protocol, model, baseUrl, apiKey, thinking, agent, PermissionConfig.defaults(), SandboxConfig.defaults());
+        this(protocol, model, baseUrl, apiKey, thinking, agent, PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty());
+    }
+
+    public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking, AgentConfig agent, PermissionConfig permissions, SandboxConfig sandbox) {
+        this(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, McpConfig.empty());
     }
 
     public ProviderConfig {
@@ -32,6 +37,9 @@ public record ProviderConfig(
         }
         if (sandbox == null) {
             sandbox = SandboxConfig.defaults();
+        }
+        if (mcp == null) {
+            mcp = McpConfig.empty();
         }
     }
 }

@@ -3,6 +3,7 @@ package com.lunacode.prompt;
 import com.lunacode.runtime.AgentRunConfig;
 
 import com.lunacode.conversation.ApiMessage;
+import com.lunacode.tool.DeferredToolSummary;
 
 import java.util.List;
 import java.util.Optional;
@@ -19,10 +20,14 @@ public final class MessageChannelBuilder {
     }
 
     public MessageChannel build(AgentRunConfig config, ModeInjectionState state, List<ApiMessage> history) {
+        return build(config, state, history, List.of());
+    }
+
+    public MessageChannel build(AgentRunConfig config, ModeInjectionState state, List<ApiMessage> history, List<DeferredToolSummary> deferredTools) {
         return new MessageChannel(
                 Optional.empty(),
                 Optional.empty(),
-                reminderBuilder.build(state),
+                reminderBuilder.build(state, deferredTools),
                 history
         );
     }

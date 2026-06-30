@@ -15,7 +15,27 @@ public interface ToolRegistry {
 
     Optional<Tool> get(String name);
 
+    default Optional<Tool> getRegistered(String name) {
+        return get(name);
+    }
+
     List<Tool> getEnabledTools();
+
+    default Optional<ToolDefinitionSnapshot> discoverDeferredTool(String name) {
+        return Optional.empty();
+    }
+
+    default boolean isDeferredDiscovered(String name) {
+        return false;
+    }
+
+    default List<DeferredToolSummary> deferredToolSummaries() {
+        return List.of();
+    }
+
+    default ToolDeclarationSet declarationsForModel(AgentMode mode) {
+        return new ToolDeclarationSet(toAPIFormat(mode), List.of());
+    }
 
     ArrayNode toAPIFormat();
 
