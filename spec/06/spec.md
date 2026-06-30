@@ -1,10 +1,11 @@
-﻿# LunaCode MCP 客户端工具接入 Spec
+# LunaCode MCP 客户端工具接入 Spec
 
 ## 背景
 
 LunaCode 当前已经具备终端 TUI 对话、内置工具注册、Agent Loop、多轮工具调用、Plan Mode、权限系统和结构化 System Prompt。现有工具主要在启动时由应用直接注册，工具来源固定，Agent 看到的是 LunaCode 内部提供的一组工具声明。
 
-下一阶段需要让 LunaCode 能接入外部 MCP Server，把第三方能力按 MCP 协议发现出来，并包装成 LunaCode 工具中心中的普通工具。用户只需要在配置文件中声明 MCP Server 列表，LunaCode 启动时自动完成连接、初始化、工具发现和注册；后续 Agent 选择和调用这些工具时，不需要知道工具来自本地内置实现还是远端 MCP Server。
+下一阶段需要让 LunaCode 能接入外部 MCP Server，把第三方能力按 MCP 协议发现出来，并
+包装成 LunaCode 工具中心中的普通工具。用户只需要在配置文件中声明 MCP Server 列表，LunaCode 启动时自动完成连接、初始化、工具发现和注册；后续 Agent 选择和调用这些工具时，不需要知道工具来自本地内置实现还是远端 MCP Server。
 
 用户初步想法中出现的 MewCode 在本文统一按当前项目名 LunaCode 处理。本阶段只聚焦 MCP 的工具能力，不扩展资源、提示词、采样等非工具能力，也不实现 Server 健康检查和自动重连。
 
