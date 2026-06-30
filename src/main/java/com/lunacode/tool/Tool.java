@@ -20,4 +20,8 @@ public interface Tool {
     String category();
 
     ValidationError validateInput(JsonNode input);
+
+    default boolean shouldDefer() {
+        return false;
+    }
 }

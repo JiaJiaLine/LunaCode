@@ -1,5 +1,6 @@
 package com.lunacode.tool;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -20,6 +21,7 @@ public class DefaultToolRegistry implements ToolRegistry {
     private final Map<String, Tool> tools = new LinkedHashMap<>();
     private final Map<String, String> aliases = new HashMap<>();
     private final Set<String> enabled = new LinkedHashSet<>();
+    private final Set<String> discoveredDeferred = new LinkedHashSet<>();
 
     @Override
     public synchronized void register(Tool tool) {
@@ -48,11 +50,20 @@ public class DefaultToolRegistry implements ToolRegistry {
 
     @Override
     public synchronized Optional<Tool> get(String name) {
-        Optional<String> canonical = resolveName(name);
-        if (canonical.isEmpty() || !enabled.contains(canonical.get())) {
+        Optional<String> canonical = resolveEnabledName(name);
+        if (canonical.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.ofNullable(tools.get(canonical.get()));
+        Tool tool = tools.get(canonical.get());
+        if (tool != null && tool.shouldDefer() && !discoveredDeferred.contains(canonical.get())) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(tool);
+    }
+
+    @Override
+    public synchronized Optional<Tool> getRegistered(String name) {
+        return resolveEnabledName(name).map(tools::get);
     }
 
     @Override
@@ -68,23 +79,93 @@ public class DefaultToolRegistry implements ToolRegistry {
     }
 
     @Override
+    public synchronized Optional<ToolDefinitionSnapshot> discoverDeferredTool(String name) {
+        Optional<String> canonical = resolveEnabledName(name);
+        if (canonical.isEmpty()) {
+            return Optional.empty();
+        }
+        Tool tool = tools.get(canonical.get());
+        if (tool == null || !tool.shouldDefer()) {
+            return Optional.empty();
+        }
+        discoveredDeferred.add(canonical.get());
+        return Optional.of(new ToolDefinitionSnapshot(
+                tool.name(),
+                descriptionEnhancer.enhance(tool),
+                tool.inputSchema()
+        ));
+    }
+
+    @Override
+    public synchronized boolean isDeferredDiscovered(String name) {
+        Optional<String> canonical = resolveName(name);
+        return canonical.isPresent() && discoveredDeferred.contains(canonical.get());
+    }
+
+    @Override
+    public synchronized List<DeferredToolSummary> deferredToolSummaries() {
+        List<DeferredToolSummary> result = new ArrayList<>();
+        for (String name : enabled) {
+            Tool tool = tools.get(name);
+            if (tool != null && tool.shouldDefer() && !discoveredDeferred.contains(name)) {
+                result.add(new DeferredToolSummary(
+                        tool.name(),
+                        limit(descriptionEnhancer.enhance(tool), 240),
+                        tool.category()
+                ));
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    @Override
+    public synchronized ToolDeclarationSet declarationsForModel(AgentMode mode) {
+        return new ToolDeclarationSet(visibleTools(mode), deferredToolSummaries());
+    }
+
+    @Override
     public synchronized ArrayNode toAPIFormat() {
         return toAPIFormat(AgentMode.DEFAULT);
     }
 
     @Override
     public synchronized ArrayNode toAPIFormat(AgentMode mode) {
+        return visibleTools(mode);
+    }
+
+    private ArrayNode visibleTools(AgentMode mode) {
         ArrayNode array = mapper.createArrayNode();
-        for (Tool tool : getEnabledTools()) {
+        for (String name : enabled) {
+            Tool tool = tools.get(name);
+            if (tool == null) {
+                continue;
+            }
             if (mode != AgentMode.PLAN && "AskUserQuestion".equals(tool.name())) {
                 continue;
             }
-            ObjectNode item = array.addObject();
-            item.put("name", tool.name());
-            item.put("description", descriptionEnhancer.enhance(tool));
-            item.set("input_schema", tool.inputSchema());
+            if (tool.shouldDefer() && !discoveredDeferred.contains(name)) {
+                continue;
+            }
+            array.add(toApiNode(tool));
         }
         return array;
+    }
+
+    private ObjectNode toApiNode(Tool tool) {
+        ObjectNode item = mapper.createObjectNode();
+        item.put("name", tool.name());
+        item.put("description", descriptionEnhancer.enhance(tool));
+        JsonNode schema = tool.inputSchema();
+        item.set("input_schema", schema == null ? mapper.createObjectNode().put("type", "object") : schema);
+        return item;
+    }
+
+    private Optional<String> resolveEnabledName(String name) {
+        Optional<String> canonical = resolveName(name);
+        if (canonical.isEmpty() || !enabled.contains(canonical.get())) {
+            return Optional.empty();
+        }
+        return canonical;
     }
 
     private Optional<String> resolveName(String name) {
@@ -123,5 +204,13 @@ public class DefaultToolRegistry implements ToolRegistry {
 
     private String normalize(String name) {
         return name.replaceAll("[^A-Za-z0-9]", "").toLowerCase();
+    }
+
+    private String limit(String value, int maxChars) {
+        String normalized = value == null ? "" : value.replaceAll("\\s+", " ").strip();
+        if (normalized.length() <= maxChars) {
+            return normalized;
+        }
+        return normalized.substring(0, Math.max(0, maxChars)) + "...";
     }
 }

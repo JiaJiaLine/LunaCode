@@ -1,0 +1,2 @@
+- rule: "mcp_local_test_get_test_data(*)"
+  effect: deny

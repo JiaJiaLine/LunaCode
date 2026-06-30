@@ -6,6 +6,10 @@ import com.lunacode.agent.event.AgentEvent;
 import com.lunacode.interaction.BlockingPermissionConfirmationBroker;
 import com.lunacode.interaction.PermissionConfirmationAnswer;
 import com.lunacode.interaction.PermissionConfirmationRequest;
+import com.lunacode.mcp.McpSession;
+import com.lunacode.mcp.McpToolDefinition;
+import com.lunacode.mcp.transport.McpTransport;
+import com.lunacode.mcp.transport.McpTransportListener;
 import com.lunacode.permission.PermissionDecisionLayer;
 import com.lunacode.permission.PermissionEvaluation;
 import com.lunacode.permission.PermissionRuleStore;
@@ -135,6 +139,47 @@ class AgentToolRunnerPermissionTest {
         assertEquals(PermissionConfirmationAnswer.ALLOW_ALWAYS, answer.get(1, TimeUnit.SECONDS));
     }
 
+    @Test
+    void mcpPermissionDenyDoesNotSendRemoteToolCall() throws Exception {
+        DefaultToolRegistry registry = new DefaultToolRegistry();
+        CountingMcpTransport transport = new CountingMcpTransport();
+        McpSession session = new McpSession(transport, mapper);
+        session.initialize(java.time.Duration.ofSeconds(1)).get(1, TimeUnit.SECONDS);
+        com.lunacode.tool.McpToolWrapper wrapper = new com.lunacode.tool.McpToolWrapper(
+                new McpToolDefinition(
+                        "demo",
+                        "remote_echo",
+                        "mcp_demo_remote_echo",
+                        "demo",
+                        mapper.createObjectNode().put("type", "object")
+                ),
+                session
+        );
+        registry.register(wrapper);
+        assertTrue(registry.discoverDeferredTool(wrapper.name()).isPresent());
+        AtomicInteger executorCalls = new AtomicInteger();
+        AgentToolRunner runner = new AgentToolRunner(
+                registry,
+                use -> {
+                    executorCalls.incrementAndGet();
+                    return ToolResult.success("done", Map.of());
+                },
+                null,
+                (toolUse, tool, mode, planFile) -> PermissionDecision.DENY
+        );
+
+        List<ToolExecutionRecord> records = runner.executeToolBatches(
+                List.of(new ToolUse("toolu_mcp", wrapper.name(), mapper.createObjectNode().put("message", "hi"))),
+                config(),
+                new CancellationToken(),
+                event -> {}
+        );
+
+        assertEquals(0, executorCalls.get());
+        assertEquals(0, transport.toolCalls.get());
+        assertTrue(records.get(0).result().isError());
+        assertEquals("permission_denied", records.get(0).result().metadata().get("errorType"));
+    }
     private AgentRunConfig config() {
         return new AgentRunConfig(Path.of("."), AgentMode.DEFAULT, Path.of(".lunacode/plan.md"), 8, 3, Clock.systemUTC());
     }
@@ -146,7 +191,38 @@ class AgentToolRunnerPermissionTest {
         }
     }
 
-    private record StubTool(String name) implements Tool {
+
+    private final class CountingMcpTransport implements McpTransport {
+        private final AtomicInteger toolCalls = new AtomicInteger();
+        private McpTransportListener listener;
+
+        @Override public String serverName() { return "demo"; }
+        @Override public CompletableFuture<Void> start(McpTransportListener listener) {
+            this.listener = listener;
+            return CompletableFuture.completedFuture(null);
+        }
+        @Override public CompletableFuture<Void> send(JsonNode message) {
+            if (!message.has("id")) {
+                return CompletableFuture.completedFuture(null);
+            }
+            com.fasterxml.jackson.databind.node.ObjectNode response = mapper.createObjectNode();
+            response.put("jsonrpc", "2.0");
+            response.set("id", message.path("id"));
+            String method = message.path("method").asText();
+            if ("initialize".equals(method)) {
+                com.fasterxml.jackson.databind.node.ObjectNode result = response.putObject("result");
+                result.put("protocolVersion", McpSession.PROTOCOL_VERSION);
+                result.putObject("capabilities").putObject("tools");
+                result.putObject("serverInfo").put("name", "demo");
+            } else if ("tools/call".equals(method)) {
+                toolCalls.incrementAndGet();
+                response.putObject("result").putArray("content").addObject().put("type", "text").put("text", "called");
+            }
+            listener.onMessage(response);
+            return CompletableFuture.completedFuture(null);
+        }
+        @Override public CompletableFuture<Void> closeAsync() { return CompletableFuture.completedFuture(null); }
+    }    private record StubTool(String name) implements Tool {
         @Override public String description() { return "stub"; }
         @Override public JsonNode inputSchema() { return new ObjectMapper().createObjectNode(); }
         @Override public ToolResult execute(ToolExecutionContext context, JsonNode input) { return ToolResult.success("ok", Map.of()); }
