@@ -2,17 +2,20 @@ package com.lunacode.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lunacode.permission.DangerousCommandBlacklist;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 public class BashTool implements Tool {
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private final DangerousCommandBlacklist blacklist = new DangerousCommandBlacklist();
     private final JsonNode schema;
 
     public BashTool() {
@@ -43,6 +46,13 @@ public class BashTool implements Tool {
     @Override
     public ToolResult execute(ToolExecutionContext context, JsonNode input) {
         String command = input.path("command").asText();
+        Optional<String> blacklistReason = blacklist.firstMatch(command);
+        if (blacklistReason.isPresent()) {
+            return ToolResult.error("命令被安全黑名单拒绝: " + blacklistReason.get(), Map.of(
+                    "errorType", "blacklisted_command",
+                    "permissionLayer", "blacklist"
+            ));
+        }
         Duration timeout = input.has("timeout_seconds")
                 ? Duration.ofSeconds(input.path("timeout_seconds").asLong())
                 : context.commandTimeout();

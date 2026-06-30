@@ -24,6 +24,13 @@ class PermissionModePolicyTest {
     }
 
     @Test
+    void parsesCommonPermissionModeAliases() {
+        assertEquals(PermissionMode.ACCEPT_EDITS, PermissionMode.fromConfig("accept-edits"));
+        assertEquals(PermissionMode.ACCEPT_EDITS, PermissionMode.fromConfig("accept_edits"));
+        assertEquals(PermissionMode.BYPASS_PERMISSIONS, PermissionMode.fromConfig("bypass"));
+        assertEquals(PermissionMode.BYPASS_PERMISSIONS, PermissionMode.fromConfig("bypass-permissions"));
+    }
+    @Test
     void acceptEditsAllowsFileEditsButStillAsksBash() {
         assertEquals(PermissionEvaluation.Decision.ALLOW, policy.decide(PermissionMode.ACCEPT_EDITS, AgentMode.DEFAULT, tool("WriteFile", false, true)));
         assertEquals(PermissionEvaluation.Decision.ALLOW, policy.decide(PermissionMode.ACCEPT_EDITS, AgentMode.DEFAULT, tool("EditFile", false, true)));

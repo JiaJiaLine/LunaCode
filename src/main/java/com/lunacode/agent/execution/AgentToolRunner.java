@@ -5,6 +5,8 @@ import com.lunacode.agent.event.AgentEventSink;
 import com.lunacode.interaction.PermissionConfirmationAnswer;
 import com.lunacode.interaction.PermissionConfirmationBroker;
 import com.lunacode.interaction.PermissionConfirmationRequest;
+import com.lunacode.permission.DangerousCommandBlacklist;
+import com.lunacode.permission.PermissionDecisionLayer;
 import com.lunacode.permission.PermissionEvaluation;
 import com.lunacode.permission.PermissionRuleStore;
 import com.lunacode.runtime.AgentRunConfig;
@@ -26,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 public final class AgentToolRunner {
@@ -35,6 +38,7 @@ public final class AgentToolRunner {
     private final ToolPermissionGateway permissionGateway;
     private final PermissionConfirmationBroker confirmationBroker;
     private final PermissionRuleStore ruleStore;
+    private final DangerousCommandBlacklist hardBlacklist = new DangerousCommandBlacklist();
 
     public AgentToolRunner(
             ToolRegistry toolRegistry,
@@ -113,14 +117,25 @@ public final class AgentToolRunner {
         if (tool == null) {
             result = ToolResult.error("工具不存在或已禁用: " + toolUse.name(), Map.of("errorType", "tool_not_found"));
         } else {
-            PermissionEvaluation evaluation = permissionGateway == null
-                    ? PermissionEvaluation.allow(com.lunacode.permission.PermissionDecisionLayer.MODE_POLICY, "未配置权限网关，默认允许", List.of(), List.of())
-                    : permissionGateway.evaluate(toolUse, tool, config);
-            result = switch (evaluation.decision()) {
-                case ALLOW -> executeTool(toolUse);
-                case ASK -> handleAsk(toolUse, config, sink, evaluation);
-                case DENY -> permissionError("工具调用被拒绝: " + toolUse.name() + "。" + evaluation.reason(), evaluation);
-            };
+            Optional<String> hardBlacklistReason = hardBlacklistReason(toolUse);
+            if (hardBlacklistReason.isPresent()) {
+                PermissionEvaluation evaluation = PermissionEvaluation.deny(
+                        PermissionDecisionLayer.BLACKLIST,
+                        hardBlacklistReason.get(),
+                        List.of(),
+                        List.of()
+                );
+                result = permissionError("工具调用被拒绝: " + toolUse.name() + "。" + evaluation.reason(), evaluation);
+            } else {
+                PermissionEvaluation evaluation = permissionGateway == null
+                        ? PermissionEvaluation.allow(PermissionDecisionLayer.MODE_POLICY, "未配置权限网关，默认允许", List.of(), List.of())
+                        : permissionGateway.evaluate(toolUse, tool, config);
+                result = switch (evaluation.decision()) {
+                    case ALLOW -> executeTool(toolUse);
+                    case ASK -> handleAsk(toolUse, config, sink, evaluation);
+                    case DENY -> permissionError("工具调用被拒绝: " + toolUse.name() + "。" + evaluation.reason(), evaluation);
+                };
+            }
         }
         Duration duration = Duration.ofNanos(System.nanoTime() - started);
         ToolExecutionRecord record = new ToolExecutionRecord(toolUse, result, duration);
@@ -146,6 +161,14 @@ public final class AgentToolRunner {
             return ToolResult.error("始终允许规则写入失败，工具未执行: " + append.error(), metadata("permission_rule_append_failed", evaluation));
         }
         return executeTool(toolUse);
+    }
+
+    private Optional<String> hardBlacklistReason(ToolUse toolUse) {
+        if (toolUse == null || !"Bash".equals(toolUse.name()) || toolUse.input() == null) {
+            return Optional.empty();
+        }
+        String command = toolUse.input().path("command").asText("");
+        return hardBlacklist.firstMatch(command);
     }
 
     private ToolResult executeTool(ToolUse toolUse) {

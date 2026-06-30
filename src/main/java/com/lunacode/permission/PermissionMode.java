@@ -28,13 +28,13 @@ public enum PermissionMode {
                 return mode;
             }
         }
-        String upper = normalized.replace("-", "_").toUpperCase(Locale.ROOT);
-        if ("ACCEPTEDITS".equals(upper)) {
-            return ACCEPT_EDITS;
-        }
-        if ("BYPASSPERMISSIONS".equals(upper)) {
-            return BYPASS_PERMISSIONS;
-        }
-        return valueOf(upper);
+        String compact = normalized.replace("-", "").replace("_", "").toLowerCase(Locale.ROOT);
+        return switch (compact) {
+            case "default", "ask" -> DEFAULT;
+            case "acceptedits", "acceptedit", "edits", "edit" -> ACCEPT_EDITS;
+            case "plan" -> PLAN;
+            case "bypasspermissions", "bypass", "dangerouslyskippermissions" -> BYPASS_PERMISSIONS;
+            default -> valueOf(normalized.replace("-", "_").toUpperCase(Locale.ROOT));
+        };
     }
 }
