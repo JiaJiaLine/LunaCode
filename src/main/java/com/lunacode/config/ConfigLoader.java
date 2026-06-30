@@ -1,4 +1,4 @@
-apackage com.lunacode.config;
+package com.lunacode.config;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;

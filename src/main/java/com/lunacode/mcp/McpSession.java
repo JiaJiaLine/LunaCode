@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class McpSession implements AutoCloseable {
@@ -19,6 +20,7 @@ public final class McpSession implements AutoCloseable {
     private final McpTransport transport;
     private final JsonRpcClient rpc;
     private final AtomicReference<McpServerStatus.State> state = new AtomicReference<>(McpServerStatus.State.CONNECTING);
+    private final List<String> warnings = new CopyOnWriteArrayList<>();
     private volatile JsonNode capabilities;
     private volatile boolean initialized;
 
@@ -75,6 +77,7 @@ public final class McpSession implements AutoCloseable {
             return CompletableFuture.failedFuture(new IllegalStateException("MCP Server 尚未初始化: " + serverName()));
         }
         if (capabilities == null || !capabilities.has("tools")) {
+            warnings.add("MCP Server `" + serverName() + "` 未声明 tools 能力，已跳过工具注册");
             return CompletableFuture.completedFuture(List.of());
         }
         return listToolsPage(null, new ArrayList<>(), timeout);
@@ -96,6 +99,10 @@ public final class McpSession implements AutoCloseable {
 
     public McpServerStatus status() {
         return new McpServerStatus(serverName(), state.get(), state.get().name().toLowerCase());
+    }
+
+    public List<String> warnings() {
+        return List.copyOf(warnings);
     }
 
     public CompletableFuture<Void> closeAsync() {
@@ -132,11 +139,13 @@ public final class McpSession implements AutoCloseable {
     private java.util.Optional<McpToolDefinition> parseTool(JsonNode tool) {
         String name = tool.path("name").asText("");
         if (name.isBlank()) {
+            warnings.add("MCP Server `" + serverName() + "` 跳过一个缺少 name 的工具声明");
             return java.util.Optional.empty();
         }
         JsonNode rawSchema = tool.path("inputSchema");
         ObjectNode schema = objectSchema(rawSchema).orElse(null);
         if (schema == null) {
+            warnings.add("MCP Server `" + serverName() + "` 工具 `" + name + "` 的 inputSchema 不是 object，已跳过");
             return java.util.Optional.empty();
         }
         String description = tool.path("description").asText("MCP 远端工具: " + name);

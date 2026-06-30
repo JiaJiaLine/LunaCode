@@ -60,9 +60,7 @@ public final class McpClientManager implements AutoCloseable {
                 SingleDiscovery discovery = future.join();
                 tools.addAll(discovery.tools());
                 statuses.add(discovery.status());
-                if (discovery.warning() != null && !discovery.warning().isBlank()) {
-                    warnings.add(discovery.warning());
-                }
+                warnings.addAll(discovery.warnings());
             }
             return new McpDiscoveryResult(tools, statuses, warnings);
         } finally {
@@ -103,7 +101,7 @@ public final class McpClientManager implements AutoCloseable {
             return new SingleDiscovery(
                     wrappers,
                     McpServerStatus.ready(server.name(), "已发现 " + wrappers.size() + " 个 MCP 工具"),
-                    null
+                    session.warnings()
             );
         } catch (Exception e) {
             if (session != null) {
@@ -130,14 +128,15 @@ public final class McpClientManager implements AutoCloseable {
     private record SingleDiscovery(
             List<McpToolWrapper> tools,
             McpServerStatus status,
-            String warning
+            List<String> warnings
     ) {
         private SingleDiscovery {
             tools = tools == null ? List.of() : List.copyOf(tools);
+            warnings = warnings == null ? List.of() : List.copyOf(warnings);
         }
 
         private static SingleDiscovery failed(String serverName, String warning) {
-            return new SingleDiscovery(List.of(), McpServerStatus.failed(serverName, warning), warning);
+            return new SingleDiscovery(List.of(), McpServerStatus.failed(serverName, warning), List.of(warning));
         }
     }
 }

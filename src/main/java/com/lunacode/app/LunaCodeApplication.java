@@ -140,8 +140,4 @@ public class LunaCodeApplication {
     private boolean isLinux() {
         return System.getProperty("os.name", "").toLowerCase().contains("linux");
     }
-
-    private boolean isLinux() {
-        return System.getProperty("os.name", "").toLowerCase().contains("linux");
-    }
 }

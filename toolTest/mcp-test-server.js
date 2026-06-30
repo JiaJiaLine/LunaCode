@@ -7,7 +7,7 @@ const rl = readline.createInterface({
 });
 
 function write(message) {
-  process.stdout.write(JSON.stringify(message) + "\n");
+  process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
 function result(id, value) {
@@ -22,6 +22,7 @@ rl.on("line", (line) => {
   if (!line.trim()) {
     return;
   }
+
   let request;
   try {
     request = JSON.parse(line);
