@@ -5,3 +5,8 @@ target/
 .idea/
 .vscode/
 config.yaml
+<<<<<<< Updated upstream
+=======
+toolTest/
+.lunacode/tmp/
+>>>>>>> Stashed changes

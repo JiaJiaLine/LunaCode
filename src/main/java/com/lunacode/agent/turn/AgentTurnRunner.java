@@ -20,6 +20,10 @@ public final class AgentTurnRunner {
         this.collector = new StreamingTurnCollector(conversationManager);
     }
 
+    public ChatProvider provider() {
+        return provider;
+    }
+
     public AgentTurnResult runTurn(AgentTurnInput input) {
         String assistantId = conversationManager.addStreamingAssistantMessage();
         try {

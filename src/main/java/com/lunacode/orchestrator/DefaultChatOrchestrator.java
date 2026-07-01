@@ -10,6 +10,11 @@ import com.lunacode.agent.event.AgentEventSink;
 import com.lunacode.agent.execution.AgentToolRunner;
 import com.lunacode.agent.turn.AgentTurnRunner;
 import com.lunacode.config.ProviderConfig;
+import com.lunacode.context.CompactTrigger;
+import com.lunacode.context.ContextManager;
+import com.lunacode.context.ContextPreparationRequest;
+import com.lunacode.context.ContextPreparationResult;
+import com.lunacode.context.DefaultContextManager;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.TokenUsage;
 import com.lunacode.interaction.BlockingPermissionConfirmationBroker;
@@ -49,6 +54,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink {
     private final ProviderConfig config;
+    private final ConversationManager conversationManager;
+    private final ChatProvider provider;
+    private final ToolRegistry toolRegistry;
+    private final ContextManager contextManager;
+    private final PromptContextBuilder promptContextBuilder;
     private final Runnable onChange;
     private final ExecutorService executor;
     private final AtomicBoolean responding = new AtomicBoolean(false);
@@ -63,12 +73,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private final Path workspaceRoot;
     private volatile Path lastPlanFile;
 
-    public DefaultChatOrchestrator(
-            ConversationManager conversationManager,
-            ChatProvider provider,
-            ProviderConfig config,
-            Runnable onChange
-    ) {
+    public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, Runnable onChange) {
         this(conversationManager, provider, config, new DefaultToolRegistry(), null, onChange, Executors.newSingleThreadExecutor(r -> {
             Thread thread = new Thread(r, "lunacode-agent");
             thread.setDaemon(true);
@@ -76,14 +81,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         }));
     }
 
-    public DefaultChatOrchestrator(
-            ConversationManager conversationManager,
-            ChatProvider provider,
-            ProviderConfig config,
-            ToolRegistry toolRegistry,
-            ToolExecutor toolExecutor,
-            Runnable onChange
-    ) {
+    public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, Runnable onChange) {
         this(conversationManager, provider, config, toolRegistry, toolExecutor, onChange, Executors.newSingleThreadExecutor(r -> {
             Thread thread = new Thread(r, "lunacode-agent");
             thread.setDaemon(true);
@@ -91,15 +89,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         }));
     }
 
-    public DefaultChatOrchestrator(
-            ConversationManager conversationManager,
-            ChatProvider provider,
-            ProviderConfig config,
-            ToolRegistry toolRegistry,
-            ToolExecutor toolExecutor,
-            BlockingUserQuestionBroker questionBroker,
-            Runnable onChange
-    ) {
+    public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, BlockingUserQuestionBroker questionBroker, Runnable onChange) {
         this(conversationManager, provider, config, toolRegistry, toolExecutor, questionBroker, onChange, Executors.newSingleThreadExecutor(r -> {
             Thread thread = new Thread(r, "lunacode-agent");
             thread.setDaemon(true);
@@ -107,88 +97,40 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         }));
     }
 
-    DefaultChatOrchestrator(
-            ConversationManager conversationManager,
-            ChatProvider provider,
-            ProviderConfig config,
-            Runnable onChange,
-            ExecutorService executor
-    ) {
+    DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, Runnable onChange, ExecutorService executor) {
         this(conversationManager, provider, config, new DefaultToolRegistry(), null, onChange, executor);
     }
 
-    DefaultChatOrchestrator(
-            ConversationManager conversationManager,
-            ChatProvider provider,
-            ProviderConfig config,
-            ToolRegistry toolRegistry,
-            ToolExecutor toolExecutor,
-            Runnable onChange,
-            ExecutorService executor
-    ) {
+    DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, Runnable onChange, ExecutorService executor) {
         this(conversationManager, provider, config, toolRegistry, toolExecutor, new BlockingUserQuestionBroker(), onChange, executor);
     }
 
-    DefaultChatOrchestrator(
-            ConversationManager conversationManager,
-            ChatProvider provider,
-            ProviderConfig config,
-            ToolRegistry toolRegistry,
-            ToolExecutor toolExecutor,
-            BlockingUserQuestionBroker questionBroker,
-            Runnable onChange,
-            ExecutorService executor
-    ) {
-        Objects.requireNonNull(conversationManager, "conversationManager");
-        Objects.requireNonNull(provider, "provider");
+    DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, BlockingUserQuestionBroker questionBroker, Runnable onChange, ExecutorService executor) {
+        this.conversationManager = Objects.requireNonNull(conversationManager, "conversationManager");
+        this.provider = Objects.requireNonNull(provider, "provider");
         this.config = Objects.requireNonNull(config, "config");
-        ToolRegistry safeRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
+        this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
         this.questionBroker = Objects.requireNonNull(questionBroker, "questionBroker");
         this.permissionBroker = new BlockingPermissionConfirmationBroker();
         this.onChange = onChange == null ? () -> {} : onChange;
         this.executor = Objects.requireNonNull(executor, "executor");
         this.workspaceRoot = Path.of("").toAbsolutePath().normalize();
+        this.promptContextBuilder = new PromptContextBuilder();
+        this.contextManager = DefaultContextManager.createDefault(workspaceRoot, config.context(), new com.lunacode.tool.SensitiveValueMasker(java.util.List.of(config.apiKey())));
         this.lastPlanFile = resolvePlanFile(workspaceRoot);
         this.permissionModeSession = new PermissionModeSession(config.permissions().mode());
         this.permissionRuleStore = new YamlPermissionRuleStore(workspaceRoot);
         this.status = new AtomicReference<>(StatusSnapshot.idle(config.protocol(), config.model()).withPermissionMode(permissionModeSession.currentMode()));
-        this.agentLoop = createAgentLoop(conversationManager, provider, config, safeRegistry, toolExecutor);
+        this.agentLoop = createAgentLoop(this.conversationManager, this.provider, config, this.toolRegistry, toolExecutor);
     }
 
-    private AgentLoop createAgentLoop(
-            ConversationManager conversationManager,
-            ChatProvider provider,
-            ProviderConfig config,
-            ToolRegistry toolRegistry,
-            ToolExecutor toolExecutor
-    ) {
+    private AgentLoop createAgentLoop(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor) {
         PathSandbox pathSandbox = new DefaultPathSandbox(workspaceRoot, config.sandbox());
         SensitivePathPolicy sensitivePathPolicy = new SensitivePathPolicy();
-        DefaultPermissionEngine permissionEngine = new DefaultPermissionEngine(
-                permissionRuleStore,
-                new PermissionTargetExtractor(pathSandbox, new BashPathScanner(), sensitivePathPolicy),
-                new PermissionRuleMatcher(),
-                new PermissionModePolicy(),
-                new DangerousCommandBlacklist()
-        );
-        AgentToolRunner toolRunner = new AgentToolRunner(
-                toolRegistry,
-                toolExecutor,
-                new ToolBatchPlanner(),
-                new DefaultToolPermissionGateway(workspaceRoot, permissionEngine),
-                permissionBroker,
-                permissionRuleStore
-        );
+        DefaultPermissionEngine permissionEngine = new DefaultPermissionEngine(permissionRuleStore, new PermissionTargetExtractor(pathSandbox, new BashPathScanner(), sensitivePathPolicy), new PermissionRuleMatcher(), new PermissionModePolicy(), new DangerousCommandBlacklist());
+        AgentToolRunner toolRunner = new AgentToolRunner(toolRegistry, toolExecutor, new ToolBatchPlanner(), new DefaultToolPermissionGateway(workspaceRoot, permissionEngine), permissionBroker, permissionRuleStore);
         AgentTurnRunner turnRunner = new AgentTurnRunner(conversationManager, provider);
-        return new DefaultAgentLoop(
-                conversationManager,
-                config,
-                toolRegistry,
-                toolRunner,
-                turnRunner,
-                new LoopDecisionMaker(),
-                new PromptContextBuilder()
-        );
+        return new DefaultAgentLoop(conversationManager, config, toolRegistry, toolRunner, turnRunner, new LoopDecisionMaker(), promptContextBuilder, contextManager);
     }
 
     @Override
@@ -197,6 +139,10 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             return;
         }
         String stripped = content.strip();
+        if ("/compact".equalsIgnoreCase(stripped)) {
+            handleCompactCommand();
+            return;
+        }
         if (permissionBroker.hasPendingConfirmation()) {
             permissionBroker.answer(stripped);
             setStatus("responding", null);
@@ -223,7 +169,6 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             setStatus("responding", "Already responding; please wait");
             return;
         }
-
         AgentMode mode = AgentMode.DEFAULT;
         String userMessage = stripped;
         if (stripped.startsWith("/plan")) {
@@ -241,7 +186,6 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
                 userMessage = userMessage + "\n\nUse plan file as context: " + lastPlanFile;
             }
         }
-
         CancellationToken token = new CancellationToken();
         currentToken.set(token);
         setStatus("responding", null);
@@ -299,6 +243,12 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             String state = toolResultReady.result().isError() ? "tool_error" : "tool_done";
             String summary = summarize(toolResultReady.result().content()) + " (" + toolResultReady.duration().toMillis() + "ms)";
             setStatus(state, toolResultReady.result().isError() ? toolResultReady.result().content() : null, toolResultReady.toolName(), summary);
+        } else if (event instanceof AgentEvent.CompactionStarted compactionStarted) {
+            setStatus("compacting", "Luna 正在压缩上下文，估算 token=" + compactionStarted.estimatedTokensBefore());
+        } else if (event instanceof AgentEvent.CompactionCompleted compactionCompleted) {
+            setStatus("responding", "上下文压缩完成：覆盖消息 " + compactionCompleted.summarizedMessages() + " 条，外置工具结果 " + compactionCompleted.externalizedToolResults() + " 个，恢复文件 " + compactionCompleted.restoredFiles() + " 个");
+        } else if (event instanceof AgentEvent.CompactionFailed compactionFailed) {
+            setStatus("warning", compactionFailed.reason());
         } else if (event instanceof AgentEvent.TurnComplete turnComplete) {
             setStatus("responding", "turn=" + turnComplete.turnIndex());
         } else if (event instanceof AgentEvent.LoopComplete) {
@@ -321,6 +271,28 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             }
         }
         onChange.run();
+    }
+
+    private void handleCompactCommand() {
+        if (permissionBroker.hasPendingConfirmation() || questionBroker.hasPendingQuestion() || pendingModeSwitch.get() != null || responding.get()) {
+            setStatus("warning", "当前有任务运行，请结束后再压缩");
+            return;
+        }
+        if (!responding.compareAndSet(false, true)) {
+            setStatus("warning", "当前有任务运行，请结束后再压缩");
+            return;
+        }
+        setStatus("compacting", "Luna 正在压缩上下文...");
+        executor.submit(() -> {
+            try {
+                ContextPreparationResult result = contextManager.compactManually(new ContextPreparationRequest(config, runConfig(AgentMode.DEFAULT), 0, conversationManager, toolRegistry, provider, promptContextBuilder, this, CompactTrigger.MANUAL));
+                String message = result.userVisibleMessage() == null ? "上下文压缩已完成" : result.userVisibleMessage();
+                setStatus(result.compacted() ? "idle" : "warning", message);
+            } finally {
+                responding.set(false);
+                onChange.run();
+            }
+        });
     }
 
     private void handlePermissionCommand(String stripped) {
@@ -364,25 +336,11 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
 
     private boolean isApproval(String answer) {
         String normalized = answer == null ? "" : answer.strip().toLowerCase(Locale.ROOT);
-        return normalized.equals("y")
-                || normalized.equals("yes")
-                || normalized.equals("ok")
-                || normalized.equals("confirm")
-                || normalized.equals("确认")
-                || normalized.equals("允许")
-                || normalized.equals("同意");
+        return normalized.equals("y") || normalized.equals("yes") || normalized.equals("ok") || normalized.equals("confirm") || normalized.equals("确认") || normalized.equals("允许") || normalized.equals("同意");
     }
 
     private AgentRunConfig runConfig(AgentMode mode) {
-        return new AgentRunConfig(
-                workspaceRoot,
-                mode,
-                permissionModeSession.modeFor(mode),
-                lastPlanFile,
-                config.agent().maxIterations(),
-                config.agent().maxConsecutiveUnknownTools(),
-                Clock.systemDefaultZone()
-        );
+        return new AgentRunConfig(workspaceRoot, mode, permissionModeSession.modeFor(mode), lastPlanFile, config.agent().maxIterations(), config.agent().maxConsecutiveUnknownTools(), Clock.systemDefaultZone());
     }
 
     private Path resolvePlanFile(Path root) {

@@ -8,7 +8,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-public class DefaultConversationManager implements ConversationManager {
+public class DefaultConversationManager implements ConversationManager, ConversationCompactionAccess {
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private final List<MutableMessage> messages = new ArrayList<>();
     private final Clock clock;
@@ -28,7 +28,7 @@ public class DefaultConversationManager implements ConversationManager {
         try {
             String id = newId();
             MessageStatus status = role == MessageRole.ASSISTANT ? MessageStatus.STREAMING : MessageStatus.COMPLETE;
-            messages.add(new MutableMessage(id, role, status, Instant.now(clock), TokenUsage.unknown(), safe(content), blocksFor(role, content), null));
+            messages.add(new MutableMessage(id, role, status, Instant.now(clock), TokenUsage.unknown(), safe(content), blocksFor(role, content), ConversationMessageMetadata.empty(), null));
             return id;
         } finally {
             lock.writeLock().unlock();
@@ -41,7 +41,7 @@ public class DefaultConversationManager implements ConversationManager {
         try {
             String id = newId();
             List<ContentBlock> safeBlocks = blocks == null ? List.of() : List.copyOf(blocks);
-            messages.add(new MutableMessage(id, MessageRole.ASSISTANT, MessageStatus.COMPLETE, Instant.now(clock), TokenUsage.unknown(), textOf(safeBlocks), new ArrayList<>(safeBlocks), null));
+            messages.add(new MutableMessage(id, MessageRole.ASSISTANT, MessageStatus.COMPLETE, Instant.now(clock), TokenUsage.unknown(), textOf(safeBlocks), new ArrayList<>(safeBlocks), ConversationMessageMetadata.empty(), null));
             return id;
         } finally {
             lock.writeLock().unlock();
@@ -57,7 +57,7 @@ public class DefaultConversationManager implements ConversationManager {
                 blocks.addAll(results);
             }
             String id = newId();
-            messages.add(new MutableMessage(id, MessageRole.TOOL, MessageStatus.COMPLETE, Instant.now(clock), TokenUsage.unknown(), textOf(blocks), blocks, null));
+            messages.add(new MutableMessage(id, MessageRole.TOOL, MessageStatus.COMPLETE, Instant.now(clock), TokenUsage.unknown(), textOf(blocks), blocks, ConversationMessageMetadata.empty(), null));
             return id;
         } finally {
             lock.writeLock().unlock();
@@ -69,7 +69,7 @@ public class DefaultConversationManager implements ConversationManager {
         lock.writeLock().lock();
         try {
             String id = newId();
-            messages.add(new MutableMessage(id, MessageRole.ASSISTANT, MessageStatus.STREAMING, Instant.now(clock), TokenUsage.unknown(), "", new ArrayList<>(), null));
+            messages.add(new MutableMessage(id, MessageRole.ASSISTANT, MessageStatus.STREAMING, Instant.now(clock), TokenUsage.unknown(), "", new ArrayList<>(), ConversationMessageMetadata.empty(), null));
             return id;
         } finally {
             lock.writeLock().unlock();
@@ -144,6 +144,61 @@ public class DefaultConversationManager implements ConversationManager {
             return List.copyOf(messages.stream().map(MutableMessage::snapshot).toList());
         } finally {
             lock.readLock().unlock();
+        }
+    }
+
+    @Override
+    public List<ConversationMessageSnapshot> fullSnapshot() {
+        lock.readLock().lock();
+        try {
+            return List.copyOf(messages.stream().map(MutableMessage::fullSnapshot).toList());
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    @Override
+    public void replaceToolResultContent(
+            String messageId,
+            String toolUseId,
+            ContentBlock.ToolResultBlock replacement,
+            com.lunacode.context.ExternalizedToolResultRef ref
+    ) {
+        Objects.requireNonNull(replacement, "replacement");
+        lock.writeLock().lock();
+        try {
+            MutableMessage message = find(messageId);
+            boolean replaced = false;
+            for (int i = 0; i < message.blocks.size(); i++) {
+                ContentBlock block = message.blocks.get(i);
+                if (block instanceof ContentBlock.ToolResultBlock toolResult
+                        && Objects.equals(toolResult.toolUseId(), toolUseId)) {
+                    message.blocks.set(i, replacement);
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) {
+                throw new IllegalArgumentException("工具结果不存在: " + toolUseId);
+            }
+            message.content = textOf(message.blocks);
+            message.metadata = message.metadata.withExternalizedToolResult(ref);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public void rewriteForCompaction(List<ConversationMessageSnapshot> rewrittenMessages) {
+        Objects.requireNonNull(rewrittenMessages, "rewrittenMessages");
+        lock.writeLock().lock();
+        try {
+            messages.clear();
+            for (ConversationMessageSnapshot snapshot : rewrittenMessages) {
+                messages.add(MutableMessage.fromSnapshot(snapshot));
+            }
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 
@@ -256,21 +311,61 @@ public class DefaultConversationManager implements ConversationManager {
         private TokenUsage usage;
         private String content;
         private final List<ContentBlock> blocks;
+        private ConversationMessageMetadata metadata;
         private String errorSummary;
 
-        private MutableMessage(String id, MessageRole role, MessageStatus status, Instant timestamp, TokenUsage usage, String content, List<ContentBlock> blocks, String errorSummary) {
+        private MutableMessage(
+                String id,
+                MessageRole role,
+                MessageStatus status,
+                Instant timestamp,
+                TokenUsage usage,
+                String content,
+                List<ContentBlock> blocks,
+                ConversationMessageMetadata metadata,
+                String errorSummary
+        ) {
             this.id = id;
             this.role = role;
             this.status = status;
             this.timestamp = timestamp;
-            this.usage = usage;
-            this.content = content;
-            this.blocks = blocks;
+            this.usage = usage == null ? TokenUsage.unknown() : usage;
+            this.content = content == null ? "" : content;
+            this.blocks = blocks == null ? new ArrayList<>() : new ArrayList<>(blocks);
+            this.metadata = metadata == null ? ConversationMessageMetadata.empty() : metadata;
             this.errorSummary = errorSummary;
+        }
+
+        private static MutableMessage fromSnapshot(ConversationMessageSnapshot snapshot) {
+            return new MutableMessage(
+                    snapshot.id(),
+                    snapshot.role(),
+                    snapshot.status(),
+                    snapshot.timestamp(),
+                    snapshot.usage(),
+                    snapshot.content(),
+                    snapshot.blocks(),
+                    snapshot.metadata(),
+                    snapshot.errorSummary()
+            );
         }
 
         private InternalMessage snapshot() {
             return new InternalMessage(id, role, status, timestamp, usage, content, errorSummary);
+        }
+
+        private ConversationMessageSnapshot fullSnapshot() {
+            return new ConversationMessageSnapshot(
+                    id,
+                    role,
+                    status,
+                    timestamp,
+                    usage,
+                    content,
+                    List.copyOf(blocks),
+                    metadata,
+                    errorSummary
+            );
         }
     }
 }

@@ -1,0 +1,33 @@
+[33m26e7474[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{Wed Jul 1 20:52:02 2026}: checkout: moving from main to main
+[33m26e7474[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{Tue Jun 30 22:57:31 2026}: pull: Fast-forward
+[33m775550a[m HEAD@{Tue Jun 30 22:57:23 2026}: checkout: moving from feature/mcpServer to main
+[33m4dfd97b[m[33m ([m[1;31morigin/feature/mcpServer[m[33m, [m[1;32mfeature/mcpServer[m[33m)[m HEAD@{Tue Jun 30 22:54:45 2026}: commit: bugfix/mcp
+[33macb0da9[m HEAD@{Tue Jun 30 20:34:04 2026}: commit (merge): Merge remote-tracking branch 'origin/main' into feature/mcpServer
+[33m954a0f7[m HEAD@{Tue Jun 30 20:18:31 2026}: commit: mcp工具接入
+[33m2b53bef[m[33m ([m[1;31morigin/bugfix/permissons[m[33m, [m[1;32mbugfix/permissons[m[33m)[m HEAD@{Tue Jun 30 20:18:14 2026}: checkout: moving from bugfix/permissons to feature/mcpServer
+[33m2b53bef[m[33m ([m[1;31morigin/bugfix/permissons[m[33m, [m[1;32mbugfix/permissons[m[33m)[m HEAD@{Tue Jun 30 17:14:29 2026}: commit: 修复permission模式切换问题
+[33m48d0f44[m[33m ([m[1;32mfeature/permissions[m[33m)[m HEAD@{Tue Jun 30 17:13:29 2026}: checkout: moving from feature/permissions to bugfix/permissons
+[33m48d0f44[m[33m ([m[1;32mfeature/permissions[m[33m)[m HEAD@{Mon Jun 29 23:41:38 2026}: commit: permission初步完成待完善
+[33m775550a[m HEAD@{Mon Jun 29 23:41:14 2026}: checkout: moving from main to feature/permissions
+[33m775550a[m HEAD@{Mon Jun 29 21:55:17 2026}: pull: Fast-forward
+[33m25a15ca[m HEAD@{Mon Jun 29 21:53:08 2026}: checkout: moving from refactor/default-agent-loop to main
+[33m8564a6e[m[33m ([m[1;31morigin/refactor/default-agent-loop[m[33m, [m[1;32mrefactor/default-agent-loop[m[33m)[m HEAD@{Mon Jun 29 21:52:03 2026}: commit: refactor: 显式注入 DefaultAgentLoop 依赖
+[33m25a15ca[m HEAD@{Mon Jun 29 21:51:09 2026}: checkout: moving from main to refactor/default-agent-loop
+[33m25a15ca[m HEAD@{Sun Jun 28 23:07:55 2026}: pull: Fast-forward
+[33m464b050[m HEAD@{Sun Jun 28 23:07:45 2026}: checkout: moving from bugfix/修复确认问题，修复Glob工具bug to main
+[33m5a3a463[m[33m ([m[1;31morigin/bugfix/修复确认问题，修复Glob工具bug[m[33m, [m[1;32mbugfix/修复确认问题，修复Glob工具bug[m[33m)[m HEAD@{Sun Jun 28 23:05:06 2026}: commit: 修复确认问题，修复Glob工具bug
+[33m464b050[m HEAD@{Sun Jun 28 23:04:23 2026}: checkout: moving from main to bugfix/修复确认问题，修复Glob工具bug
+[33m464b050[m HEAD@{Sun Jun 28 18:42:54 2026}: pull: Fast-forward
+[33mf7e3989[m HEAD@{Sun Jun 28 18:40:20 2026}: checkout: moving from refactor/将tool，loop和prompt解耦 to main
+[33m3d005d2[m[33m ([m[1;31morigin/refactor/将tool，loop和prompt解耦[m[33m, [m[1;32mrefactor/将tool，loop和prompt解耦[m[33m)[m HEAD@{Sun Jun 28 18:38:25 2026}: commit (merge): Merge branch 'main' of https://github.com/JiaJiaLine/LunaCode into refactor/将tool，loop和prompt解耦
+[33m342a5d5[m HEAD@{Sun Jun 28 18:33:52 2026}: commit: 重构agent结构
+[33mf2e2ab8[m[33m ([m[1;31morigin/feature/SystemPrompt设计和Prompt组装[m[33m, [m[1;32mfeature/SystemPrompt设计和Prompt组装[m[33m)[m HEAD@{Sun Jun 28 18:33:28 2026}: checkout: moving from feature/SystemPrompt设计和Prompt组装 to refactor/将tool，loop和prompt解耦
+[33mf2e2ab8[m[33m ([m[1;31morigin/feature/SystemPrompt设计和Prompt组装[m[33m, [m[1;32mfeature/SystemPrompt设计和Prompt组装[m[33m)[m HEAD@{Sun Jun 28 18:00:14 2026}: commit (merge): 解决冲突
+[33m4103757[m HEAD@{Sun Jun 28 17:56:15 2026}: checkout: moving from feature/SystemPrompt设计和Prompt组装 to feature/SystemPrompt设计和Prompt组装
+[33m4103757[m HEAD@{Sun Jun 28 17:46:20 2026}: commit: prompt优化
+[33m11f3332[m HEAD@{Sun Jun 28 16:16:12 2026}: commit: SystemPrompt设计和Prompt组装
+[33mf7e3989[m HEAD@{Sun Jun 28 16:15:05 2026}: checkout: moving from main to feature/SystemPrompt设计和Prompt组装
+[33mf7e3989[m HEAD@{Sun Jun 28 13:58:32 2026}: commit: Agent Loop实现
+[33mcfc1491[m HEAD@{Sat Jun 27 16:01:17 2026}: commit: 修复openai协议以及工具调用
+[33mbe1e965[m HEAD@{Sat Jun 27 02:15:05 2026}: commit: 工具系统完成
+[33mbb7b787[m HEAD@{Thu Jun 25 13:53:13 2026}: commit (initial): 实现终端对话
