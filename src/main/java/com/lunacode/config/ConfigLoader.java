@@ -45,12 +45,12 @@ public class ConfigLoader {
         try {
             raw = mapper.readValue(path.toFile(), RawConfig.class);
         } catch (IOException e) {
-            throw new ConfigException("无法读取配置文件: " + path, e);
+            throw new ConfigException("读取配置文件失败: " + path, e);
         }
 
         String protocol = requireText(raw.protocol(), "protocol").toLowerCase();
         if (!protocol.equals("openai") && !protocol.equals("anthropic")) {
-            throw new ConfigException("protocol 只支持 openai 或 anthropic");
+            throw new ConfigException("protocol 只能是 openai 或 anthropic");
         }
 
         String model = requireText(raw.model(), "model");
@@ -61,7 +61,8 @@ public class ConfigLoader {
         PermissionConfig permissions = toPermissionConfig(raw.permissions());
         SandboxConfig sandbox = toSandboxConfig(raw.sandbox());
         McpConfig mcp = toMergedMcpConfig(readUserMcp(path), raw.mcp());
-        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp);
+        ContextConfig context = toContextConfig(raw.context());
+        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp, context);
     }
 
     private RawMcp readUserMcp(Path projectConfigPath) {
@@ -77,7 +78,7 @@ public class ConfigLoader {
             RawConfig raw = mapper.readValue(normalizedUserPath.toFile(), RawConfig.class);
             return raw.mcp();
         } catch (IOException e) {
-            throw new ConfigException("无法读取用户级 MCP 配置: " + normalizedUserPath, e);
+            throw new ConfigException("读取用户级 MCP 配置失败: " + normalizedUserPath, e);
         }
     }
 
@@ -92,7 +93,7 @@ public class ConfigLoader {
         try {
             URI uri = new URI(value);
             if (uri.getScheme() == null || uri.getHost() == null) {
-                throw new ConfigException("base_url 必须是完整 URL");
+                throw new ConfigException("base_url 必须是有效 URL");
             }
             return uri;
         } catch (URISyntaxException e) {
@@ -104,7 +105,7 @@ public class ConfigLoader {
         try {
             URI uri = new URI(value);
             if (uri.getScheme() == null) {
-                throw new McpServerParseException("url 必须是完整 URL");
+                throw new McpServerParseException("url 必须是有效 URL");
             }
             return uri;
         } catch (URISyntaxException e) {
@@ -169,6 +170,32 @@ public class ConfigLoader {
         return new SandboxConfig(networkEnabled, extraRoots);
     }
 
+    private ContextConfig toContextConfig(RawContext raw) {
+        ContextConfig defaults = ContextConfig.defaults();
+        if (raw == null) {
+            return defaults;
+        }
+        return new ContextConfig(
+                raw.contextWindowTokens() == null ? defaults.contextWindowTokens() : raw.contextWindowTokens(),
+                raw.summaryOutputReserveTokens() == null ? defaults.summaryOutputReserveTokens() : raw.summaryOutputReserveTokens(),
+                raw.autoCompactMarginTokens() == null ? defaults.autoCompactMarginTokens() : raw.autoCompactMarginTokens(),
+                raw.forceCompactExtraTokens() == null ? defaults.forceCompactExtraTokens() : raw.forceCompactExtraTokens(),
+                raw.singleToolResultCharLimit() == null ? defaults.singleToolResultCharLimit() : raw.singleToolResultCharLimit(),
+                raw.toolMessageCharLimit() == null ? defaults.toolMessageCharLimit() : raw.toolMessageCharLimit(),
+                raw.recentTokenBudget() == null ? defaults.recentTokenBudget() : raw.recentTokenBudget(),
+                raw.minimumRecentMessages() == null ? defaults.minimumRecentMessages() : raw.minimumRecentMessages(),
+                raw.restoredFileLimit() == null ? defaults.restoredFileLimit() : raw.restoredFileLimit(),
+                raw.restoredFileTokenLimit() == null ? defaults.restoredFileTokenLimit() : raw.restoredFileTokenLimit(),
+                raw.skillDefinitionTokenBudget() == null ? defaults.skillDefinitionTokenBudget() : raw.skillDefinitionTokenBudget(),
+                raw.maxAutoSummaryFailures() == null ? defaults.maxAutoSummaryFailures() : raw.maxAutoSummaryFailures(),
+                raw.promptTooLongGroupRetries() == null ? defaults.promptTooLongGroupRetries() : raw.promptTooLongGroupRetries(),
+                raw.promptTooLongDropFraction() == null ? defaults.promptTooLongDropFraction() : raw.promptTooLongDropFraction(),
+                raw.sessionRoot() == null || raw.sessionRoot().isBlank()
+                        ? defaults.sessionRoot()
+                        : Path.of(raw.sessionRoot().trim())
+        );
+    }
+
     private McpConfig toMergedMcpConfig(RawMcp userMcp, RawMcp projectMcp) {
         LinkedHashMap<String, McpServerConfig> servers = new LinkedHashMap<>();
         List<String> warnings = new ArrayList<>();
@@ -205,12 +232,12 @@ public class ConfigLoader {
             throw new McpServerParseException("Server 名不能为空");
         }
         if (raw == null) {
-            throw new McpServerParseException("配置为空");
+            throw new McpServerParseException("配置不能为空");
         }
         boolean hasCommand = hasText(raw.command());
         boolean hasUrl = hasText(raw.url());
         if (hasCommand == hasUrl) {
-            throw new McpServerParseException("必须且只能声明 command 或 url");
+            throw new McpServerParseException("必须且只能配置 command 或 url");
         }
         if (hasCommand) {
             return parseStdioServer(serverName, raw);
@@ -274,20 +301,20 @@ public class ConfigLoader {
         try {
             return environmentValueExpander.expand(value);
         } catch (EnvironmentValueExpander.MissingEnvironmentValueException e) {
-            throw new McpServerParseException(field + " 引用的 " + e.getMessage());
+            throw new McpServerParseException(field + " " + e.getMessage());
         }
     }
 
     private String requireMcpMapKey(String key, String field) {
         if (key == null || key.isBlank()) {
-            throw new McpServerParseException(field + " 中存在空 key");
+            throw new McpServerParseException(field + " 不能包含空 key");
         }
         return key.strip();
     }
 
     private String safeServerName(String name) {
         if (name == null || name.isBlank()) {
-            return "<未命名>";
+            return "<空名称>";
         }
         String oneLine = name.replaceAll("\\s+", " ").strip();
         return oneLine.length() <= 80 ? oneLine : oneLine.substring(0, 80) + "...";
@@ -310,7 +337,8 @@ public class ConfigLoader {
             RawAgent agent,
             RawPermissions permissions,
             RawSandbox sandbox,
-            RawMcp mcp
+            RawMcp mcp,
+            RawContext context
     ) {}
 
     private record RawThinking(
@@ -336,6 +364,24 @@ public class ConfigLoader {
     private record RawSandboxRoot(
             String name,
             String path
+    ) {}
+
+    private record RawContext(
+            @JsonProperty("context_window_tokens") Long contextWindowTokens,
+            @JsonProperty("summary_output_reserve_tokens") Long summaryOutputReserveTokens,
+            @JsonProperty("auto_compact_margin_tokens") Long autoCompactMarginTokens,
+            @JsonProperty("force_compact_extra_tokens") Long forceCompactExtraTokens,
+            @JsonProperty("single_tool_result_char_limit") Integer singleToolResultCharLimit,
+            @JsonProperty("tool_message_char_limit") Integer toolMessageCharLimit,
+            @JsonProperty("recent_token_budget") Integer recentTokenBudget,
+            @JsonProperty("minimum_recent_messages") Integer minimumRecentMessages,
+            @JsonProperty("restored_file_limit") Integer restoredFileLimit,
+            @JsonProperty("restored_file_token_limit") Integer restoredFileTokenLimit,
+            @JsonProperty("skill_definition_token_budget") Integer skillDefinitionTokenBudget,
+            @JsonProperty("max_auto_summary_failures") Integer maxAutoSummaryFailures,
+            @JsonProperty("prompt_too_long_group_retries") Integer promptTooLongGroupRetries,
+            @JsonProperty("prompt_too_long_drop_fraction") Double promptTooLongDropFraction,
+            @JsonProperty("session_root") String sessionRoot
     ) {}
 
     private record RawMcp(
