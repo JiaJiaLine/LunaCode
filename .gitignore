@@ -1,12 +1,9 @@
-target/
+﻿target/
 *.class
 *.jar
 *.log
 .idea/
 .vscode/
 config.yaml
-<<<<<<< Updated upstream
-=======
 toolTest/
 .lunacode/tmp/
->>>>>>> Stashed changes
