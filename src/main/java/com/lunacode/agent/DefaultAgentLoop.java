@@ -7,6 +7,10 @@ import com.lunacode.agent.turn.AgentTurnInput;
 import com.lunacode.agent.turn.AgentTurnResult;
 import com.lunacode.agent.turn.AgentTurnRunner;
 import com.lunacode.config.ProviderConfig;
+import com.lunacode.context.CompactTrigger;
+import com.lunacode.context.ContextManager;
+import com.lunacode.context.ContextPreparationRequest;
+import com.lunacode.context.ContextPreparationResult;
 import com.lunacode.conversation.ContentBlock;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.MessageRole;
@@ -29,6 +33,7 @@ public final class DefaultAgentLoop implements AgentLoop {
     private final AgentTurnRunner turnRunner;
     private final LoopDecisionMaker decisionMaker;
     private final PromptContextBuilder promptContextBuilder;
+    private final ContextManager contextManager;
 
     public DefaultAgentLoop(
             ConversationManager conversationManager,
@@ -39,6 +44,19 @@ public final class DefaultAgentLoop implements AgentLoop {
             LoopDecisionMaker decisionMaker,
             PromptContextBuilder promptContextBuilder
     ) {
+        this(conversationManager, providerConfig, toolRegistry, toolRunner, turnRunner, decisionMaker, promptContextBuilder, ContextManager.noop());
+    }
+
+    public DefaultAgentLoop(
+            ConversationManager conversationManager,
+            ProviderConfig providerConfig,
+            ToolRegistry toolRegistry,
+            AgentToolRunner toolRunner,
+            AgentTurnRunner turnRunner,
+            LoopDecisionMaker decisionMaker,
+            PromptContextBuilder promptContextBuilder,
+            ContextManager contextManager
+    ) {
         this.conversationManager = Objects.requireNonNull(conversationManager, "conversationManager");
         this.providerConfig = Objects.requireNonNull(providerConfig, "providerConfig");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
@@ -46,6 +64,7 @@ public final class DefaultAgentLoop implements AgentLoop {
         this.turnRunner = Objects.requireNonNull(turnRunner, "turnRunner");
         this.decisionMaker = Objects.requireNonNull(decisionMaker, "decisionMaker");
         this.promptContextBuilder = Objects.requireNonNull(promptContextBuilder, "promptContextBuilder");
+        this.contextManager = contextManager == null ? ContextManager.noop() : contextManager;
     }
 
     @Override
@@ -66,6 +85,23 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
 
             int turnIndex = turns + 1;
+            ContextPreparationResult contextResult = contextManager.prepareBeforeTurn(new ContextPreparationRequest(
+                    providerConfig,
+                    config,
+                    turnIndex,
+                    conversationManager,
+                    toolRegistry,
+                    turnRunner.provider(),
+                    promptContextBuilder,
+                    sink,
+                    CompactTrigger.AUTO_CHECK
+            ));
+            if (!contextResult.proceed()) {
+                emit(sink, new AgentEvent.ErrorOccurred(contextResult.userVisibleMessage(), null));
+                emit(sink, new AgentEvent.LoopComplete(turns));
+                return;
+            }
+
             PromptBundle promptBundle = promptContextBuilder.build(
                     config,
                     turnIndex,
@@ -85,6 +121,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             AgentTurnResult turnResult = turnRunner.runTurn(input);
             turns = turnIndex;
             cumulativeUsage = cumulativeUsage.merge(turnResult.usage());
+            contextManager.recordProviderUsage(cumulativeUsage);
 
             LoopContext context = new LoopContext(config, token, turnIndex, consecutiveUnknownTools, cumulativeUsage);
             LoopDecision decision = decisionMaker.decide(context, turnResult);
@@ -118,6 +155,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                 if (records.isEmpty() && token.isCancellationRequested()) {
                     continue;
                 }
+                contextManager.recordToolExecutions(records);
                 conversationManager.addUserToolResultMessage(records.stream()
                         .map(record -> new ContentBlock.ToolResultBlock(
                                 record.toolUse().id(),

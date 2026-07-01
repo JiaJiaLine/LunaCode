@@ -1,4 +1,4 @@
-﻿protocol: anthropic
+protocol: anthropic
 model: claude-sonnet-4-20250514
 base_url: https://api.anthropic.com
 api_key: ${ANTHROPIC_API_KEY}
@@ -12,6 +12,8 @@ sandbox:
   extra_roots:
     - name: shared-cache
       path: /tmp/lunacode-cache
+<<<<<<< Updated upstream
+=======
 
 # MCP 配置支持两层合并：先读取用户级 ~/.lunacode/config.yaml，再读取当前项目配置。
 # 同名 server 由项目级完整覆盖用户级；不同名 server 会并集合并。
@@ -27,3 +29,22 @@ mcp:
       url: https://mcp.example.com/mcp
       headers:
         Authorization: Bearer ${REMOTE_MCP_TOKEN}
+
+# 上下文管理配置。.lunacode/tmp/context/ 是当前会话临时产物目录。
+context:
+  context_window_tokens: 200000
+  summary_output_reserve_tokens: 20000
+  auto_compact_margin_tokens: 13000
+  force_compact_extra_tokens: 10000
+  single_tool_result_char_limit: 50000
+  tool_message_char_limit: 200000
+  recent_token_budget: 10000
+  minimum_recent_messages: 5
+  restored_file_limit: 5
+  restored_file_token_limit: 5000
+  skill_definition_token_budget: 25000
+  max_auto_summary_failures: 3
+  prompt_too_long_group_retries: 3
+  prompt_too_long_drop_fraction: 0.2
+  session_root: .lunacode/tmp/context
+>>>>>>> Stashed changes

@@ -125,6 +125,35 @@ class ConfigLoaderTest {
         assertEquals("cache", loaded.sandbox().extraRoots().get(0).name());
         assertEquals("/tmp/lunacode-cache", loaded.sandbox().extraRoots().get(0).path());
     }
+
+    @Test
+    void loadsContextConfigOverrides() throws Exception {
+        Path config = writeConfig("""
+                protocol: openai
+                model: gpt-test
+                base_url: https://api.openai.com
+                api_key: key-test
+                context:
+                  context_window_tokens: 64000
+                  summary_output_reserve_tokens: 4000
+                  auto_compact_margin_tokens: 3000
+                  force_compact_extra_tokens: 2000
+                  single_tool_result_char_limit: 1234
+                  tool_message_char_limit: 5678
+                  restored_file_limit: 3
+                  restored_file_token_limit: 2222
+                """);
+
+        ProviderConfig loaded = new ConfigLoader().load(config);
+
+        assertEquals(64_000, loaded.context().contextWindowTokens());
+        assertEquals(57_000, loaded.context().budget().autoCompactThresholdTokens());
+        assertEquals(59_000, loaded.context().budget().forceCompactThresholdTokens());
+        assertEquals(1_234, loaded.context().singleToolResultCharLimit());
+        assertEquals(5_678, loaded.context().toolMessageCharLimit());
+        assertEquals(3, loaded.context().restoredFileLimit());
+        assertEquals(2_222, loaded.context().restoredFileTokenLimit());
+    }
     private Path writeConfig(String content) throws Exception {
         Path config = tempDir.resolve("config.yaml");
         Files.writeString(config, content);

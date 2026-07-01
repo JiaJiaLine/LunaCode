@@ -11,18 +11,23 @@ public record ProviderConfig(
         AgentConfig agent,
         PermissionConfig permissions,
         SandboxConfig sandbox,
-        McpConfig mcp
+        McpConfig mcp,
+        ContextConfig context
 ) {
     public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking) {
-        this(protocol, model, baseUrl, apiKey, thinking, AgentConfig.defaults(), PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty());
+        this(protocol, model, baseUrl, apiKey, thinking, AgentConfig.defaults(), PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty(), ContextConfig.defaults());
     }
 
     public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking, AgentConfig agent) {
-        this(protocol, model, baseUrl, apiKey, thinking, agent, PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty());
+        this(protocol, model, baseUrl, apiKey, thinking, agent, PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty(), ContextConfig.defaults());
     }
 
     public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking, AgentConfig agent, PermissionConfig permissions, SandboxConfig sandbox) {
-        this(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, McpConfig.empty());
+        this(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, McpConfig.empty(), ContextConfig.defaults());
+    }
+
+    public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking, AgentConfig agent, PermissionConfig permissions, SandboxConfig sandbox, McpConfig mcp) {
+        this(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp, ContextConfig.defaults());
     }
 
     public ProviderConfig {
@@ -40,6 +45,9 @@ public record ProviderConfig(
         }
         if (mcp == null) {
             mcp = McpConfig.empty();
+        }
+        if (context == null) {
+            context = ContextConfig.defaults();
         }
     }
 }
