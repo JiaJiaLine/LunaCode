@@ -18,10 +18,17 @@ class LanternaLunaTuiStatusContextTest {
 
         assertFalse(shouldPrintStatus(status));
         assertEquals("", printStatus(status));
-        assertEquals("[s:20250115-143000-a3f7 mem:on:updated] ", promptContext(status));
+        assertEquals("[DEFAULT s:20250115-143000-a3f7 mem:on:updated] ", promptContext(status));
     }
 
-    private boolean shouldPrintStatus(StatusSnapshot status) throws Exception {
+
+    @Test
+    void promptContextShowsPlanModeWithoutSessionOrMemory() throws Exception {
+        StatusSnapshot status = StatusSnapshot.idle("test", "model")
+                .withAgentMode(com.lunacode.runtime.AgentMode.PLAN);
+
+        assertEquals("[PLAN] ", promptContext(status));
+    }    private boolean shouldPrintStatus(StatusSnapshot status) throws Exception {
         LanternaLunaTui tui = new LanternaLunaTui(null, null);
         Method method = LanternaLunaTui.class.getDeclaredMethod("shouldPrintStatus", StatusSnapshot.class);
         method.setAccessible(true);

@@ -21,6 +21,6 @@ public final class PermissionModeSession {
     }
 
     public PermissionMode modeFor(AgentMode agentMode) {
-        return agentMode == AgentMode.PLAN ? PermissionMode.PLAN : currentMode();
+        return currentMode();
     }
 }

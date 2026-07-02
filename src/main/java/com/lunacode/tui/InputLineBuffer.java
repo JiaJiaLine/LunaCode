@@ -60,7 +60,24 @@ final class InputLineBuffer {
         cursorIndex = content.length();
     }
 
-    String consume() {
+
+    void replaceCommandToken(String replacement) {
+        String safeReplacement = replacement == null ? "" : replacement;
+        int tokenEnd = 0;
+        while (tokenEnd < content.length() && !Character.isWhitespace(content.charAt(tokenEnd))) {
+            tokenEnd++;
+        }
+        content.replace(0, tokenEnd, safeReplacement);
+        cursorIndex = safeReplacement.length();
+    }
+
+    void replaceAll(String value) {
+        content.setLength(0);
+        if (value != null && !value.isEmpty()) {
+            content.append(value);
+        }
+        cursorIndex = content.length();
+    }    String consume() {
         String value = content.toString();
         clear();
         return value;

@@ -170,6 +170,7 @@ public class LunaCodeApplication {
                 requestRender
         );
         LanternaLunaTui tui = new LanternaLunaTui(conversationManager, orchestrator);
+        orchestrator.setCommandUiController(tui);
         tuiRef.set(tui);
         try {
             tui.start();
