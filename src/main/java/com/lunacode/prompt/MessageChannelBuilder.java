@@ -24,9 +24,20 @@ public final class MessageChannelBuilder {
     }
 
     public MessageChannel build(AgentRunConfig config, ModeInjectionState state, List<ApiMessage> history, List<DeferredToolSummary> deferredTools) {
+        return build(config, state, history, deferredTools, Optional.empty(), Optional.empty());
+    }
+
+    public MessageChannel build(
+            AgentRunConfig config,
+            ModeInjectionState state,
+            List<ApiMessage> history,
+            List<DeferredToolSummary> deferredTools,
+            Optional<ProjectInstructionContext> projectInstructions,
+            Optional<MemoryContext> memory
+    ) {
         return new MessageChannel(
-                Optional.empty(),
-                Optional.empty(),
+                projectInstructions,
+                memory,
                 reminderBuilder.build(state, deferredTools),
                 history
         );

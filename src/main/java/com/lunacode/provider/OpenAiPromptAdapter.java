@@ -4,11 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.lunacode.config.ProviderConfig;
+import com.lunacode.conversation.ApiMessage;
 import com.lunacode.prompt.PromptBundle;
 import com.lunacode.prompt.SystemReminder;
 import com.lunacode.prompt.SystemReminderRenderer;
-import com.lunacode.config.ProviderConfig;
-import com.lunacode.conversation.ApiMessage;
 
 public final class OpenAiPromptAdapter implements ProviderPromptAdapter {
     private final ObjectMapper mapper = new ObjectMapper();
@@ -23,6 +23,12 @@ public final class OpenAiPromptAdapter implements ProviderPromptAdapter {
         ArrayNode messageArray = root.putArray("messages");
         addMessage(messageArray, "system", promptBundle.system().staticPrompt().render());
         addMessage(messageArray, "developer", promptBundle.system().environmentContext().render());
+        promptBundle.messages().projectInstructions()
+                .filter(context -> !context.isEmpty())
+                .ifPresent(context -> addMessage(messageArray, "developer", context.render()));
+        promptBundle.messages().memory()
+                .filter(context -> !context.isEmpty())
+                .ifPresent(context -> addMessage(messageArray, "developer", context.render()));
         for (SystemReminder reminder : promptBundle.messages().reminders()) {
             addMessage(messageArray, "system", reminderRenderer.render(reminder));
         }

@@ -154,6 +154,21 @@ class ConfigLoaderTest {
         assertEquals(3, loaded.context().restoredFileLimit());
         assertEquals(2_222, loaded.context().restoredFileTokenLimit());
     }
+    @Test
+    void loadsMemoryConfigOverride() throws Exception {
+        Path config = writeConfig("""
+                protocol: openai
+                model: gpt-test
+                base_url: https://api.openai.com
+                api_key: key-test
+                memory:
+                  auto_update: false
+                """);
+
+        ProviderConfig loaded = new ConfigLoader().load(config);
+
+        assertFalse(loaded.memory().autoUpdate());
+    }
     private Path writeConfig(String content) throws Exception {
         Path config = tempDir.resolve("config.yaml");
         Files.writeString(config, content);

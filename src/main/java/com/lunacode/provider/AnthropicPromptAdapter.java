@@ -59,6 +59,16 @@ public final class AnthropicPromptAdapter implements ProviderPromptAdapter {
         ObjectNode environmentBlock = system.addObject();
         environmentBlock.put("type", "text");
         environmentBlock.put("text", promptBundle.system().environmentContext().render());
+        promptBundle.messages().projectInstructions().filter(instructions -> !instructions.isEmpty()).ifPresent(instructions -> {
+            ObjectNode block = system.addObject();
+            block.put("type", "text");
+            block.put("text", instructions.render());
+        });
+        promptBundle.messages().memory().filter(memory -> !memory.isEmpty()).ifPresent(memory -> {
+            ObjectNode block = system.addObject();
+            block.put("type", "text");
+            block.put("text", memory.render());
+        });
         return system;
     }
 

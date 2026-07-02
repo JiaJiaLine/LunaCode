@@ -15,10 +15,18 @@ import com.lunacode.context.ContextManager;
 import com.lunacode.context.ContextPreparationRequest;
 import com.lunacode.context.ContextPreparationResult;
 import com.lunacode.context.DefaultContextManager;
+import com.lunacode.conversation.ConversationCompactionAccess;
 import com.lunacode.conversation.ConversationManager;
+import com.lunacode.conversation.ConversationMessageSnapshot;
+import com.lunacode.conversation.MessageStatus;
 import com.lunacode.conversation.TokenUsage;
 import com.lunacode.interaction.BlockingPermissionConfirmationBroker;
 import com.lunacode.interaction.BlockingUserQuestionBroker;
+import com.lunacode.memory.AutoMemoryUpdater;
+import com.lunacode.memory.MemoryCommandHandler;
+import com.lunacode.memory.MemoryIndexSnapshot;
+import com.lunacode.memory.MemoryRuntimeState;
+import com.lunacode.memory.MemoryUpdateRequest;
 import com.lunacode.permission.BashPathScanner;
 import com.lunacode.permission.DangerousCommandBlacklist;
 import com.lunacode.permission.DefaultPathSandbox;
@@ -37,6 +45,7 @@ import com.lunacode.provider.ChatProvider;
 import com.lunacode.runtime.AgentMode;
 import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.runtime.CancellationToken;
+import com.lunacode.session.SessionCommandHandler;
 import com.lunacode.tool.DefaultToolPermissionGateway;
 import com.lunacode.tool.DefaultToolRegistry;
 import com.lunacode.tool.ToolBatchPlanner;
@@ -45,12 +54,15 @@ import com.lunacode.tool.ToolRegistry;
 
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink {
     private final ProviderConfig config;
@@ -70,31 +82,65 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private final BlockingPermissionConfirmationBroker permissionBroker;
     private final PermissionModeSession permissionModeSession;
     private final PermissionRuleStore permissionRuleStore;
+    private final SessionCommandHandler sessionCommandHandler;
+    private final MemoryCommandHandler memoryCommandHandler;
+    private final AutoMemoryUpdater autoMemoryUpdater;
+    private final MemoryRuntimeState memoryRuntimeState;
+    private final Supplier<String> sessionIdSupplier;
+    private final Supplier<MemoryIndexSnapshot> memoryIndexSupplier;
     private final Path workspaceRoot;
     private volatile Path lastPlanFile;
+    private volatile int currentTurnStartIndex;
 
     public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, Runnable onChange) {
-        this(conversationManager, provider, config, new DefaultToolRegistry(), null, onChange, Executors.newSingleThreadExecutor(r -> {
-            Thread thread = new Thread(r, "lunacode-agent");
-            thread.setDaemon(true);
-            return thread;
-        }));
+        this(conversationManager, provider, config, new DefaultToolRegistry(), null, onChange, newAgentExecutor());
     }
 
     public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, Runnable onChange) {
-        this(conversationManager, provider, config, toolRegistry, toolExecutor, onChange, Executors.newSingleThreadExecutor(r -> {
-            Thread thread = new Thread(r, "lunacode-agent");
-            thread.setDaemon(true);
-            return thread;
-        }));
+        this(conversationManager, provider, config, toolRegistry, toolExecutor, onChange, newAgentExecutor());
     }
 
     public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, BlockingUserQuestionBroker questionBroker, Runnable onChange) {
-        this(conversationManager, provider, config, toolRegistry, toolExecutor, questionBroker, onChange, Executors.newSingleThreadExecutor(r -> {
-            Thread thread = new Thread(r, "lunacode-agent");
-            thread.setDaemon(true);
-            return thread;
-        }));
+        this(conversationManager, provider, config, toolRegistry, toolExecutor, questionBroker, null, onChange, newAgentExecutor());
+    }
+
+    public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, BlockingUserQuestionBroker questionBroker, SessionCommandHandler sessionCommandHandler, Runnable onChange) {
+        this(conversationManager, provider, config, toolRegistry, toolExecutor, questionBroker, sessionCommandHandler, onChange, newAgentExecutor());
+    }
+
+    public DefaultChatOrchestrator(
+            ConversationManager conversationManager,
+            ChatProvider provider,
+            ProviderConfig config,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
+            BlockingUserQuestionBroker questionBroker,
+            SessionCommandHandler sessionCommandHandler,
+            MemoryCommandHandler memoryCommandHandler,
+            AutoMemoryUpdater autoMemoryUpdater,
+            MemoryRuntimeState memoryRuntimeState,
+            Supplier<String> sessionIdSupplier,
+            Supplier<MemoryIndexSnapshot> memoryIndexSupplier,
+            PromptContextBuilder promptContextBuilder,
+            Runnable onChange
+    ) {
+        this(
+                conversationManager,
+                provider,
+                config,
+                toolRegistry,
+                toolExecutor,
+                questionBroker,
+                sessionCommandHandler,
+                memoryCommandHandler,
+                autoMemoryUpdater,
+                memoryRuntimeState,
+                sessionIdSupplier,
+                memoryIndexSupplier,
+                promptContextBuilder,
+                onChange,
+                newAgentExecutor()
+        );
     }
 
     DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, Runnable onChange, ExecutorService executor) {
@@ -102,26 +148,80 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     }
 
     DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, Runnable onChange, ExecutorService executor) {
-        this(conversationManager, provider, config, toolRegistry, toolExecutor, new BlockingUserQuestionBroker(), onChange, executor);
+        this(conversationManager, provider, config, toolRegistry, toolExecutor, new BlockingUserQuestionBroker(), null, onChange, executor);
     }
 
     DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, BlockingUserQuestionBroker questionBroker, Runnable onChange, ExecutorService executor) {
+        this(conversationManager, provider, config, toolRegistry, toolExecutor, questionBroker, null, onChange, executor);
+    }
+
+    DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor, BlockingUserQuestionBroker questionBroker, SessionCommandHandler sessionCommandHandler, Runnable onChange, ExecutorService executor) {
+        this(
+                conversationManager,
+                provider,
+                config,
+                toolRegistry,
+                toolExecutor,
+                questionBroker,
+                sessionCommandHandler,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                onChange,
+                executor
+        );
+    }
+
+    DefaultChatOrchestrator(
+            ConversationManager conversationManager,
+            ChatProvider provider,
+            ProviderConfig config,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
+            BlockingUserQuestionBroker questionBroker,
+            SessionCommandHandler sessionCommandHandler,
+            MemoryCommandHandler memoryCommandHandler,
+            AutoMemoryUpdater autoMemoryUpdater,
+            MemoryRuntimeState memoryRuntimeState,
+            Supplier<String> sessionIdSupplier,
+            Supplier<MemoryIndexSnapshot> memoryIndexSupplier,
+            PromptContextBuilder promptContextBuilder,
+            Runnable onChange,
+            ExecutorService executor
+    ) {
         this.conversationManager = Objects.requireNonNull(conversationManager, "conversationManager");
         this.provider = Objects.requireNonNull(provider, "provider");
         this.config = Objects.requireNonNull(config, "config");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
         this.questionBroker = Objects.requireNonNull(questionBroker, "questionBroker");
+        this.sessionCommandHandler = sessionCommandHandler;
+        this.memoryCommandHandler = memoryCommandHandler;
+        this.autoMemoryUpdater = autoMemoryUpdater;
+        this.memoryRuntimeState = memoryRuntimeState;
+        this.sessionIdSupplier = sessionIdSupplier;
+        this.memoryIndexSupplier = memoryIndexSupplier;
         this.permissionBroker = new BlockingPermissionConfirmationBroker();
         this.onChange = onChange == null ? () -> {} : onChange;
         this.executor = Objects.requireNonNull(executor, "executor");
         this.workspaceRoot = Path.of("").toAbsolutePath().normalize();
-        this.promptContextBuilder = new PromptContextBuilder();
+        this.promptContextBuilder = promptContextBuilder == null ? new PromptContextBuilder() : promptContextBuilder;
         this.contextManager = DefaultContextManager.createDefault(workspaceRoot, config.context(), new com.lunacode.tool.SensitiveValueMasker(java.util.List.of(config.apiKey())));
         this.lastPlanFile = resolvePlanFile(workspaceRoot);
         this.permissionModeSession = new PermissionModeSession(config.permissions().mode());
         this.permissionRuleStore = new YamlPermissionRuleStore(workspaceRoot);
         this.status = new AtomicReference<>(StatusSnapshot.idle(config.protocol(), config.model()).withPermissionMode(permissionModeSession.currentMode()));
         this.agentLoop = createAgentLoop(this.conversationManager, this.provider, config, this.toolRegistry, toolExecutor);
+    }
+
+    private static ExecutorService newAgentExecutor() {
+        return Executors.newSingleThreadExecutor(r -> {
+            Thread thread = new Thread(r, "lunacode-agent");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     private AgentLoop createAgentLoop(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor) {
@@ -141,6 +241,20 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         String stripped = content.strip();
         if ("/compact".equalsIgnoreCase(stripped)) {
             handleCompactCommand();
+            return;
+        }
+        if (sessionCommandHandler != null && sessionCommandHandler.matches(stripped)) {
+            boolean busy = responding.get()
+                    || permissionBroker.hasPendingConfirmation()
+                    || questionBroker.hasPendingQuestion()
+                    || pendingModeSwitch.get() != null;
+            SessionCommandHandler.CommandResult result = sessionCommandHandler.handle(stripped, busy);
+            setStatus(result.state(), result.message());
+            return;
+        }
+        if (memoryCommandHandler != null && memoryCommandHandler.matches(stripped)) {
+            MemoryCommandHandler.CommandResult result = memoryCommandHandler.handle(stripped);
+            setStatus(result.state(), result.message());
             return;
         }
         if (permissionBroker.hasPendingConfirmation()) {
@@ -186,6 +300,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
                 userMessage = userMessage + "\n\nUse plan file as context: " + lastPlanFile;
             }
         }
+        currentTurnStartIndex = fullSnapshotSize();
         CancellationToken token = new CancellationToken();
         currentToken.set(token);
         setStatus("responding", null);
@@ -215,7 +330,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
 
     @Override
     public StatusSnapshot status() {
-        return status.get();
+        return enrich(status.get());
     }
 
     @Override
@@ -246,7 +361,9 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         } else if (event instanceof AgentEvent.CompactionStarted compactionStarted) {
             setStatus("compacting", "Luna 正在压缩上下文，估算 token=" + compactionStarted.estimatedTokensBefore());
         } else if (event instanceof AgentEvent.CompactionCompleted compactionCompleted) {
-            setStatus("responding", "上下文压缩完成：覆盖消息 " + compactionCompleted.summarizedMessages() + " 条，外置工具结果 " + compactionCompleted.externalizedToolResults() + " 个，恢复文件 " + compactionCompleted.restoredFiles() + " 个");
+            setStatus("responding", "上下文压缩完成：覆盖消息 " + compactionCompleted.summarizedMessages()
+                    + " 条，外置工具结果 " + compactionCompleted.externalizedToolResults()
+                    + " 个，恢复文件 " + compactionCompleted.restoredFiles() + " 个");
         } else if (event instanceof AgentEvent.CompactionFailed compactionFailed) {
             setStatus("warning", compactionFailed.reason());
         } else if (event instanceof AgentEvent.TurnComplete turnComplete) {
@@ -260,6 +377,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
                 status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), old.state(), old.errorSummary(), old.toolName(), old.toolSummary(), permissionModeSession.currentMode()));
             } else {
                 setStatus("idle", null);
+                triggerAutoMemoryUpdate();
             }
         } else if (event instanceof AgentEvent.ErrorOccurred errorOccurred) {
             boolean cancelled = currentToken.get() != null && currentToken.get().isCancellationRequested();
@@ -275,11 +393,11 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
 
     private void handleCompactCommand() {
         if (permissionBroker.hasPendingConfirmation() || questionBroker.hasPendingQuestion() || pendingModeSwitch.get() != null || responding.get()) {
-            setStatus("warning", "当前有任务运行，请结束后再压缩");
+            setStatus("warning", "当前有任务运行，请结束后再压缩上下文");
             return;
         }
         if (!responding.compareAndSet(false, true)) {
-            setStatus("warning", "当前有任务运行，请结束后再压缩");
+            setStatus("warning", "当前有任务运行，请结束后再压缩上下文");
             return;
         }
         setStatus("compacting", "Luna 正在压缩上下文...");
@@ -361,6 +479,82 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private void setStatus(String state, String errorSummary, String toolName, String toolSummary) {
         status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), state, errorSummary, toolName, toolSummary, permissionModeSession.currentMode()));
         onChange.run();
+    }
+
+    private int fullSnapshotSize() {
+        if (conversationManager instanceof ConversationCompactionAccess access) {
+            return access.fullSnapshot().size();
+        }
+        return conversationManager.snapshot().size();
+    }
+
+    private void triggerAutoMemoryUpdate() {
+        if (autoMemoryUpdater == null) {
+            return;
+        }
+        if (!(conversationManager instanceof ConversationCompactionAccess access)) {
+            return;
+        }
+        List<ConversationMessageSnapshot> snapshots = access.fullSnapshot();
+        int start = Math.max(0, Math.min(currentTurnStartIndex, snapshots.size()));
+        List<ConversationMessageSnapshot> delta = snapshots.subList(start, snapshots.size()).stream()
+                .filter(message -> message.status() == MessageStatus.COMPLETE)
+                .toList();
+        if (delta.isEmpty()) {
+            return;
+        }
+        autoMemoryUpdater.updateAsync(new MemoryUpdateRequest(currentSessionId(), delta, currentMemoryIndex(), Instant.now()));
+        onChange.run();
+    }
+
+    private MemoryIndexSnapshot currentMemoryIndex() {
+        if (memoryIndexSupplier == null) {
+            return MemoryIndexSnapshot.empty();
+        }
+        try {
+            MemoryIndexSnapshot snapshot = memoryIndexSupplier.get();
+            return snapshot == null ? MemoryIndexSnapshot.empty() : snapshot;
+        } catch (RuntimeException e) {
+            return MemoryIndexSnapshot.empty();
+        }
+    }
+
+    private String currentSessionId() {
+        if (sessionIdSupplier == null) {
+            return "";
+        }
+        try {
+            String id = sessionIdSupplier.get();
+            return id == null ? "" : id;
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    private StatusSnapshot enrich(StatusSnapshot snapshot) {
+        if (snapshot == null) {
+            return null;
+        }
+        return snapshot.withSessionAndMemory(shortSessionId(), memoryAutoUpdateEnabled(), memoryLatestState());
+    }
+
+    private String shortSessionId() {
+        String id = currentSessionId();
+        if (id.isBlank()) {
+            return null;
+        }
+        if (id.length() <= 20) {
+            return id;
+        }
+        return id.substring(0, Math.min(15, id.length())) + "-" + id.substring(id.length() - 4);
+    }
+
+    private Boolean memoryAutoUpdateEnabled() {
+        return memoryRuntimeState == null ? null : memoryRuntimeState.autoUpdateEnabled();
+    }
+
+    private String memoryLatestState() {
+        return memoryRuntimeState == null ? null : memoryRuntimeState.latestState();
     }
 
     private String toolRunningSummary(String toolName, JsonNode input) {
