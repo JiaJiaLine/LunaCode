@@ -48,4 +48,29 @@ class InputLineBufferTest {
         assertEquals("", buffer.content());
         assertEquals(0, buffer.cursorIndex());
     }
+
+    @Test
+    void replaceCommandTokenKeepsArgumentsAndMovesCursorToCommandEnd() {
+        InputLineBuffer buffer = new InputLineBuffer();
+        for (char c : "/pe arg".toCharArray()) {
+            buffer.insert(c);
+        }
+
+        buffer.replaceCommandToken("/permission");
+
+        assertEquals("/permission arg", buffer.content());
+        assertEquals("/permission".length(), buffer.cursorIndex());
+    }
+
+    @Test
+    void replaceAllReplacesContentAndMovesCursorToEnd() {
+        InputLineBuffer buffer = new InputLineBuffer();
+        buffer.insert('a');
+        buffer.insert('b');
+
+        buffer.replaceAll("/status");
+
+        assertEquals("/status", buffer.content());
+        assertEquals("/status".length(), buffer.cursorIndex());
+    }
 }

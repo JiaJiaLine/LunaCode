@@ -9,6 +9,16 @@ import com.lunacode.agent.event.AgentEvent;
 import com.lunacode.agent.event.AgentEventSink;
 import com.lunacode.agent.execution.AgentToolRunner;
 import com.lunacode.agent.turn.AgentTurnRunner;
+import com.lunacode.command.BuiltinSlashCommands;
+import com.lunacode.command.CommandRuntime;
+import com.lunacode.command.CommandRuntimeStatus;
+import com.lunacode.command.CommandUiController;
+import com.lunacode.command.DispatchResult;
+import com.lunacode.command.SlashCommandCompleter;
+import com.lunacode.command.SlashCommandCompletion;
+import com.lunacode.command.SlashCommandDispatcher;
+import com.lunacode.command.SlashCommandParser;
+import com.lunacode.command.SlashCommandRegistry;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.context.CompactTrigger;
 import com.lunacode.context.ContextManager;
@@ -64,7 +74,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
-public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink {
+public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink, CommandRuntime {
     private final ProviderConfig config;
     private final ConversationManager conversationManager;
     private final ChatProvider provider;
@@ -88,9 +98,15 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private final MemoryRuntimeState memoryRuntimeState;
     private final Supplier<String> sessionIdSupplier;
     private final Supplier<MemoryIndexSnapshot> memoryIndexSupplier;
+    private final SlashCommandDispatcher commandDispatcher;
+    private final SlashCommandCompleter commandCompleter;
     private final Path workspaceRoot;
     private volatile Path lastPlanFile;
     private volatile int currentTurnStartIndex;
+    private volatile CommandUiController commandUiController = () -> {};
+    private volatile AgentMode agentMode = AgentMode.DEFAULT;
+    private volatile PermissionMode permissionModeBeforePlan;
+    private volatile boolean planPermissionManuallyChanged;
 
     public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, Runnable onChange) {
         this(conversationManager, provider, config, new DefaultToolRegistry(), null, onChange, newAgentExecutor());
@@ -208,12 +224,25 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.executor = Objects.requireNonNull(executor, "executor");
         this.workspaceRoot = Path.of("").toAbsolutePath().normalize();
         this.promptContextBuilder = promptContextBuilder == null ? new PromptContextBuilder() : promptContextBuilder;
+        CommandBundle commands = defaultCommandBundle();
+        this.commandDispatcher = commands.dispatcher();
+        this.commandCompleter = commands.completer();
         this.contextManager = DefaultContextManager.createDefault(workspaceRoot, config.context(), new com.lunacode.tool.SensitiveValueMasker(java.util.List.of(config.apiKey())));
         this.lastPlanFile = resolvePlanFile(workspaceRoot);
         this.permissionModeSession = new PermissionModeSession(config.permissions().mode());
+        this.permissionModeBeforePlan = this.permissionModeSession.currentMode();
         this.permissionRuleStore = new YamlPermissionRuleStore(workspaceRoot);
         this.status = new AtomicReference<>(StatusSnapshot.idle(config.protocol(), config.model()).withPermissionMode(permissionModeSession.currentMode()));
         this.agentLoop = createAgentLoop(this.conversationManager, this.provider, config, this.toolRegistry, toolExecutor);
+    }
+
+    private record CommandBundle(SlashCommandDispatcher dispatcher, SlashCommandCompleter completer) {
+    }
+
+    private static CommandBundle defaultCommandBundle() {
+        SlashCommandRegistry registry = new SlashCommandRegistry();
+        BuiltinSlashCommands.registerAll(registry);
+        return new CommandBundle(new SlashCommandDispatcher(registry, new SlashCommandParser()), new SlashCommandCompleter(registry));
     }
 
     private static ExecutorService newAgentExecutor() {
@@ -239,22 +268,8 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             return;
         }
         String stripped = content.strip();
-        if ("/compact".equalsIgnoreCase(stripped)) {
-            handleCompactCommand();
-            return;
-        }
-        if (sessionCommandHandler != null && sessionCommandHandler.matches(stripped)) {
-            boolean busy = responding.get()
-                    || permissionBroker.hasPendingConfirmation()
-                    || questionBroker.hasPendingQuestion()
-                    || pendingModeSwitch.get() != null;
-            SessionCommandHandler.CommandResult result = sessionCommandHandler.handle(stripped, busy);
-            setStatus(result.state(), result.message());
-            return;
-        }
-        if (memoryCommandHandler != null && memoryCommandHandler.matches(stripped)) {
-            MemoryCommandHandler.CommandResult result = memoryCommandHandler.handle(stripped);
-            setStatus(result.state(), result.message());
+        DispatchResult commandResult = commandDispatcher.dispatch(stripped, this);
+        if (commandResult == DispatchResult.HANDLED) {
             return;
         }
         if (permissionBroker.hasPendingConfirmation()) {
@@ -271,40 +286,15 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             answerModeSwitch(stripped);
             return;
         }
-        if ("/cancel".equalsIgnoreCase(stripped)) {
-            cancelCurrentRun();
-            return;
-        }
-        if (stripped.startsWith("/permissions")) {
-            handlePermissionCommand(stripped);
-            return;
-        }
         if (!responding.compareAndSet(false, true)) {
-            setStatus("responding", "Already responding; please wait");
+            setStatus("warning", "当前忙，请稍后再试");
             return;
-        }
-        AgentMode mode = AgentMode.DEFAULT;
-        String userMessage = stripped;
-        if (stripped.startsWith("/plan")) {
-            mode = AgentMode.PLAN;
-            userMessage = stripped.substring("/plan".length()).strip();
-            if (userMessage.isBlank()) {
-                userMessage = "Enter plan mode. Clarify requirements first, then write a plan.";
-            }
-            lastPlanFile = resolvePlanFile(workspaceRoot);
-        } else if (stripped.startsWith("/do")) {
-            userMessage = stripped.substring("/do".length()).strip();
-            if (userMessage.isBlank()) {
-                userMessage = "Continue execution using plan file: " + lastPlanFile;
-            } else {
-                userMessage = userMessage + "\n\nUse plan file as context: " + lastPlanFile;
-            }
         }
         currentTurnStartIndex = fullSnapshotSize();
         CancellationToken token = new CancellationToken();
         currentToken.set(token);
         setStatus("responding", null);
-        AgentRequest request = new AgentRequest(userMessage, runConfig(mode));
+        AgentRequest request = new AgentRequest(stripped, runConfig(agentMode));
         executor.submit(() -> {
             try {
                 agentLoop.run(request, this, token);
@@ -315,7 +305,6 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             }
         });
     }
-
     @Override
     public void cancelCurrentRun() {
         CancellationToken token = currentToken.get();
@@ -329,8 +318,148 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     }
 
     @Override
+    public SlashCommandCompletion completeSlashCommand(String input, int cursorIndex) {
+        return commandCompleter.complete(input, cursorIndex);
+    }
+
+    @Override
+    public void setCommandUiController(CommandUiController controller) {
+        this.commandUiController = controller == null ? () -> {} : controller;
+    }
+
+    @Override
+    public boolean isBusy() {
+        return responding.get();
+    }
+
+    @Override
+    public boolean hasPendingUserAnswer() {
+        return questionBroker.hasPendingQuestion();
+    }
+
+    @Override
+    public boolean hasPendingPermissionAnswer() {
+        return permissionBroker.hasPendingConfirmation();
+    }
+
+    @Override
+    public boolean hasPendingDangerousModeConfirmation() {
+        return pendingModeSwitch.get() != null;
+    }
+
+    @Override
+    public CommandRuntimeStatus runtimeStatus() {
+        StatusSnapshot snapshot = status();
+        return new CommandRuntimeStatus(
+                snapshot.agentMode(),
+                snapshot.permissionMode(),
+                snapshot.provider(),
+                snapshot.model(),
+                snapshot.inputTokens(),
+                snapshot.outputTokens(),
+                snapshot.state(),
+                snapshot.sessionShortId(),
+                snapshot.memoryAutoUpdateEnabled(),
+                snapshot.memoryLatestState()
+        );
+    }
+
+    @Override
+    public void showInfo(String message) {
+        setStatus("idle", message);
+    }
+
+    @Override
+    public void showWarning(String message) {
+        setStatus("warning", message);
+    }
+
+    @Override
+    public void showError(String message) {
+        setStatus("error", message);
+    }
+
+    @Override
+    public void requestRender() {
+        onChange.run();
+    }
+
+    @Override
+    public void clearVisibleScreen() {
+        commandUiController.clearVisibleScreen();
+        setStatus("idle", "已清屏");
+    }
+
+    @Override
+    public void sendUserMessage(String message) {
+        submitUserMessage(message);
+    }
+
+    @Override
+    public void compactContext() {
+        handleCompactCommand();
+    }
+
+    @Override
+    public void enterPlanMode() {
+        if (agentMode != AgentMode.PLAN) {
+            permissionModeBeforePlan = permissionModeSession.currentMode();
+        }
+        agentMode = AgentMode.PLAN;
+        planPermissionManuallyChanged = false;
+        lastPlanFile = resolvePlanFile(workspaceRoot);
+        permissionModeSession.setCurrentMode(PermissionMode.PLAN);
+        setStatus("idle", "已进入计划模式");
+    }
+
+    @Override
+    public void enterDefaultMode() {
+        if (agentMode == AgentMode.PLAN && !planPermissionManuallyChanged && permissionModeBeforePlan != null) {
+            permissionModeSession.setCurrentMode(permissionModeBeforePlan);
+        }
+        agentMode = AgentMode.DEFAULT;
+        setStatus("idle", "已进入执行模式");
+    }
+
+    @Override
+    public void switchPermissionMode(PermissionMode mode) {
+        permissionModeSession.setCurrentMode(Objects.requireNonNull(mode, "mode"));
+        if (agentMode == AgentMode.PLAN) {
+            planPermissionManuallyChanged = true;
+        }
+        setStatus("idle", "权限模式已切换为 " + mode.configValue());
+    }
+
+    @Override
+    public void requestDangerousPermissionMode(PermissionMode mode) {
+        pendingModeSwitch.set(Objects.requireNonNull(mode, "mode"));
+        setStatus("waiting_permission", "bypassPermissions 是危险模式。输入 yes/确认 切换，其他输入取消。", "permissions", "切换到 bypassPermissions");
+    }
+
+    @Override
+    public void runSessionCommand(String rawInput) {
+        if (sessionCommandHandler == null) {
+            setStatus("error", "当前未启用会话命令");
+            return;
+        }
+        boolean busy = isBusy() || hasPendingPermissionAnswer() || hasPendingUserAnswer() || hasPendingDangerousModeConfirmation();
+        SessionCommandHandler.CommandResult result = sessionCommandHandler.handle(rawInput, busy);
+        setStatus(result.state(), result.message());
+    }
+
+    @Override
+    public void runMemoryCommand(String rawInput) {
+        if (memoryCommandHandler == null) {
+            setStatus("error", "当前未启用记忆命令");
+            return;
+        }
+        MemoryCommandHandler.CommandResult result = memoryCommandHandler.handle(rawInput);
+        setStatus(result.state(), result.message());
+    }
+    @Override
     public StatusSnapshot status() {
-        return enrich(status.get());
+        StatusSnapshot snapshot = enrich(status.get());
+        return snapshot == null ? null : snapshot.withAgentMode(agentMode).withPermissionMode(permissionModeSession.currentMode());
     }
 
     @Override
@@ -338,7 +467,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         if (event instanceof AgentEvent.UsageUpdated usageUpdated) {
             TokenUsage usage = usageUpdated.cumulativeUsage();
             StatusSnapshot old = status.get();
-            status.set(new StatusSnapshot(config.protocol(), config.model(), usage.inputTokens(), usage.outputTokens(), old.state(), old.errorSummary(), old.toolName(), old.toolSummary(), permissionModeSession.currentMode()));
+            status.set(new StatusSnapshot(config.protocol(), config.model(), usage.inputTokens(), usage.outputTokens(), old.state(), old.errorSummary(), old.toolName(), old.toolSummary(), agentMode, permissionModeSession.currentMode()));
         } else if (event instanceof AgentEvent.ToolUseStarted toolUseStarted) {
             if ("AskUserQuestion".equals(toolUseStarted.toolName())) {
                 String question = toolUseStarted.input().path("question").asText("Waiting for user answer");
@@ -374,7 +503,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             if (cancelled) {
                 setStatus("cancelled", "Cancelled by user");
             } else if ("error".equals(old.state()) || "tool_error".equals(old.state())) {
-                status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), old.state(), old.errorSummary(), old.toolName(), old.toolSummary(), permissionModeSession.currentMode()));
+                status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), old.state(), old.errorSummary(), old.toolName(), old.toolSummary(), agentMode, permissionModeSession.currentMode()));
             } else {
                 setStatus("idle", null);
                 triggerAutoMemoryUpdate();
@@ -385,7 +514,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         } else if (event instanceof AgentEvent.StreamText) {
             StatusSnapshot old = status.get();
             if (!"responding".equals(old.state())) {
-                status.set(new StatusSnapshot(config.protocol(), config.model(), old.inputTokens(), old.outputTokens(), "responding", null, old.toolName(), old.toolSummary(), permissionModeSession.currentMode()));
+                status.set(new StatusSnapshot(config.protocol(), config.model(), old.inputTokens(), old.outputTokens(), "responding", null, old.toolName(), old.toolSummary(), agentMode, permissionModeSession.currentMode()));
             }
         }
         onChange.run();
@@ -413,40 +542,13 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         });
     }
 
-    private void handlePermissionCommand(String stripped) {
-        String[] parts = stripped.split("\\s+");
-        if (parts.length == 1) {
-            setStatus("idle", "当前权限模式: " + permissionModeSession.currentMode().configValue());
-            return;
-        }
-        if (parts.length > 2) {
-            setStatus("error", "用法: /permissions [default|acceptEdits|plan|bypassPermissions]");
-            return;
-        }
-        PermissionMode mode;
-        try {
-            mode = PermissionMode.fromConfig(parts[1]);
-        } catch (IllegalArgumentException e) {
-            setStatus("error", "未知权限模式: " + parts[1]);
-            return;
-        }
-        if (mode == PermissionMode.BYPASS_PERMISSIONS) {
-            pendingModeSwitch.set(mode);
-            setStatus("waiting_permission", "bypassPermissions 是危险模式。输入 yes/确认 切换，其他输入取消。", "permissions", "切换到 bypassPermissions");
-            return;
-        }
-        permissionModeSession.setCurrentMode(mode);
-        setStatus("idle", "权限模式已切换为 " + mode.configValue());
-    }
-
     private void answerModeSwitch(String answer) {
         PermissionMode mode = pendingModeSwitch.getAndSet(null);
         if (mode == null) {
             return;
         }
         if (isApproval(answer)) {
-            permissionModeSession.setCurrentMode(mode);
-            setStatus("idle", "权限模式已切换为 " + mode.configValue());
+            switchPermissionMode(mode);
         } else {
             setStatus("idle", "已取消切换权限模式，当前仍为 " + permissionModeSession.currentMode().configValue());
         }
@@ -472,12 +574,12 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     }
 
     private void setStatus(String state, String errorSummary) {
-        status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), state, errorSummary, null, null, permissionModeSession.currentMode()));
+        status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), state, errorSummary, null, null, agentMode, permissionModeSession.currentMode()));
         onChange.run();
     }
 
     private void setStatus(String state, String errorSummary, String toolName, String toolSummary) {
-        status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), state, errorSummary, toolName, toolSummary, permissionModeSession.currentMode()));
+        status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), state, errorSummary, toolName, toolSummary, agentMode, permissionModeSession.currentMode()));
         onChange.run();
     }
 

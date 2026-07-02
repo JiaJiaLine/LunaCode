@@ -1,5 +1,8 @@
 package com.lunacode.tui;
 
+import com.lunacode.command.CommandUiController;
+import com.lunacode.command.SlashCommandCompletion;
+import com.lunacode.command.SlashCommandName;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.InternalMessage;
 import com.lunacode.conversation.MessageRole;
@@ -20,7 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public class LanternaLunaTui implements LunaTui {
+public class LanternaLunaTui implements LunaTui, CommandUiController {
     private static final String ESC = "\u001B";
     private static final long ESC_SEQUENCE_TIMEOUT_MILLIS = 100L;
 
@@ -35,6 +38,8 @@ public class LanternaLunaTui implements LunaTui {
     private Attributes originalAttributes;
     private volatile boolean running;
     private boolean promptVisible;
+    private boolean completionMenuVisible;
+    private List<SlashCommandName> completionCandidates = List.of();
 
     public LanternaLunaTui(ConversationManager conversationManager, ChatOrchestrator orchestrator) {
         this.conversationManager = conversationManager;
@@ -172,28 +177,78 @@ public class LanternaLunaTui implements LunaTui {
     }
 
     private void handleKey(int key) {
+        PrintWriter writer = terminal.writer();
+        if (key == '\t') {
+            handleTabCompletion(writer);
+            return;
+        }
         if (key == '\r' || key == '\n') {
+            clearCompletionMenu(writer);
             String content = input.consume().strip();
-            clearPromptLine(terminal.writer());
+            clearPromptLine(writer);
             promptVisible = false;
             if (!content.isEmpty()) {
                 orchestrator.submitUserMessage(content);
             } else {
-                drawPrompt(terminal.writer());
+                drawPrompt(writer);
             }
             return;
         }
         if (key == 127 || key == '\b') {
+            clearCompletionMenu(writer);
             input.backspace();
-            drawPrompt(terminal.writer());
+            drawPrompt(writer);
             return;
         }
         if (!Character.isISOControl(key)) {
+            clearCompletionMenu(writer);
             input.insert(key);
-            drawPrompt(terminal.writer());
+            drawPrompt(writer);
         }
     }
 
+    private void handleTabCompletion(PrintWriter writer) {
+        clearCompletionMenu(writer);
+        SlashCommandCompletion completion = orchestrator.completeSlashCommand(input.content(), input.cursorIndex());
+        if (completion instanceof SlashCommandCompletion.Single single) {
+            input.replaceCommandToken(single.replacement());
+            drawPrompt(writer);
+            return;
+        }
+        if (completion instanceof SlashCommandCompletion.Multiple multiple) {
+            showCompletionMenu(writer, multiple.candidates());
+            return;
+        }
+        drawPrompt(writer);
+    }
+
+    private void showCompletionMenu(PrintWriter writer, List<SlashCommandName> candidates) {
+        completionCandidates = List.copyOf(candidates);
+        clearPromptLine(writer);
+        writer.print("\r" + ESC + "[K");
+        writer.println("候选: " + formatCompletionCandidates(completionCandidates));
+        promptVisible = false;
+        completionMenuVisible = true;
+        drawPrompt(writer);
+    }
+
+    private String formatCompletionCandidates(List<SlashCommandName> candidates) {
+        return candidates.stream()
+                .map(candidate -> candidate.value() + (candidate.value().equals(candidate.ownerCommand()) ? "" : " -> " + candidate.ownerCommand()))
+                .reduce((left, right) -> left + "  " + right)
+                .orElse("");
+    }
+
+    private void clearCompletionMenu(PrintWriter writer) {
+        if (!completionMenuVisible) {
+            return;
+        }
+        clearPromptLine(writer);
+        writer.print("\r" + ESC + "[1A" + ESC + "[K");
+        completionMenuVisible = false;
+        completionCandidates = List.of();
+        promptVisible = false;
+    }
     private boolean renderMessage(PrintWriter writer, InternalMessage message) {
         if (message.role() == MessageRole.USER) {
             if (startedMessages.add(message.id())) {
@@ -292,6 +347,7 @@ public class LanternaLunaTui implements LunaTui {
 
     private String statusPrintKey(StatusSnapshot status) {
         return status.state()
+                + "\u0000" + status.agentMode()
                 + "\u0000" + status.permissionMode().configValue()
                 + "\u0000" + statusText(status.errorSummary())
                 + "\u0000" + statusText(status.toolName())
@@ -302,9 +358,7 @@ public class LanternaLunaTui implements LunaTui {
     }
 
     private boolean hasStatusContext(StatusSnapshot status) {
-        return (status.sessionShortId() != null && !status.sessionShortId().isBlank())
-                || status.memoryAutoUpdateEnabled() != null
-                || (status.memoryLatestState() != null && !status.memoryLatestState().isBlank());
+        return status != null;
     }
 
     private String statusContext(StatusSnapshot status) {
@@ -329,6 +383,7 @@ public class LanternaLunaTui implements LunaTui {
             return "";
         }
         List<String> parts = new ArrayList<>();
+        parts.add(status.agentMode().name());
         if (status.sessionShortId() != null && !status.sessionShortId().isBlank()) {
             parts.add("s:" + status.sessionShortId());
         }
@@ -385,7 +440,24 @@ public class LanternaLunaTui implements LunaTui {
         }
     }
 
-    private void restoreTerminal() {
+
+    @Override
+    public synchronized void clearVisibleScreen() {
+        if (terminal == null) {
+            input.clear();
+            completionMenuVisible = false;
+            completionCandidates = List.of();
+            return;
+        }
+        PrintWriter writer = terminal.writer();
+        writer.print(ESC + "[2J" + ESC + "[H");
+        input.clear();
+        completionMenuVisible = false;
+        completionCandidates = List.of();
+        promptVisible = false;
+        lastPrintedStatusKey = null;
+        drawPrompt(writer);
+    }    private void restoreTerminal() {
         if (terminal == null) {
             return;
         }
