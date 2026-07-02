@@ -13,6 +13,7 @@ import org.jline.utils.NonBlockingReader;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -82,7 +83,7 @@ public class LanternaLunaTui implements LunaTui {
             printStatus(writer, status);
         }
         if (!"responding".equals(status.state()) && !"tool_running".equals(status.state())) {
-            drawPrompt(writer);
+            drawPrompt(writer, status);
         }
         writer.flush();
         terminal.flush();
@@ -294,22 +295,81 @@ public class LanternaLunaTui implements LunaTui {
                 + "\u0000" + status.permissionMode().configValue()
                 + "\u0000" + statusText(status.errorSummary())
                 + "\u0000" + statusText(status.toolName())
-                + "\u0000" + statusText(status.toolSummary());
+                + "\u0000" + statusText(status.toolSummary())
+                + "\u0000" + statusText(status.sessionShortId())
+                + "\u0000" + statusText(status.memoryAutoUpdateEnabled() == null ? null : status.memoryAutoUpdateEnabled().toString())
+                + "\u0000" + statusText(status.memoryLatestState());
+    }
+
+    private boolean hasStatusContext(StatusSnapshot status) {
+        return (status.sessionShortId() != null && !status.sessionShortId().isBlank())
+                || status.memoryAutoUpdateEnabled() != null
+                || (status.memoryLatestState() != null && !status.memoryLatestState().isBlank());
+    }
+
+    private String statusContext(StatusSnapshot status) {
+        List<String> parts = new ArrayList<>();
+        if (status.sessionShortId() != null && !status.sessionShortId().isBlank()) {
+            parts.add("session=" + status.sessionShortId());
+        }
+        if (status.memoryAutoUpdateEnabled() != null) {
+            String memory = "memory=" + (status.memoryAutoUpdateEnabled() ? "on" : "off");
+            if (status.memoryLatestState() != null && !status.memoryLatestState().isBlank()) {
+                memory += ":" + status.memoryLatestState();
+            }
+            parts.add(memory);
+        } else if (status.memoryLatestState() != null && !status.memoryLatestState().isBlank()) {
+            parts.add("memory=" + status.memoryLatestState());
+        }
+        return String.join(" | ", parts);
+    }
+
+    private String promptContext(StatusSnapshot status) {
+        if (status == null || !hasStatusContext(status)) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        if (status.sessionShortId() != null && !status.sessionShortId().isBlank()) {
+            parts.add("s:" + status.sessionShortId());
+        }
+        if (status.memoryAutoUpdateEnabled() != null) {
+            String memory = "mem:" + (status.memoryAutoUpdateEnabled() ? "on" : "off");
+            if (status.memoryLatestState() != null && !status.memoryLatestState().isBlank()) {
+                memory += ":" + status.memoryLatestState();
+            }
+            parts.add(memory);
+        } else if (status.memoryLatestState() != null && !status.memoryLatestState().isBlank()) {
+            parts.add("mem:" + status.memoryLatestState());
+        }
+        return "[" + String.join(" ", parts) + "] ";
     }
 
     private String statusText(String value) {
         return value == null ? "" : value;
     }
+
     private String safeStatusMessage(StatusSnapshot status) {
         String message = status.errorSummary();
         if ((message == null || message.isBlank()) && status.toolSummary() != null) {
             message = status.toolSummary();
         }
-        return message == null || message.isBlank() ? status.state() : message;
+        if (message == null || message.isBlank()) {
+            message = status.state();
+        }
+        String context = statusContext(status);
+        if (context.isBlank()) {
+            return message;
+        }
+        return context + " | " + message;
     }
 
     private void drawPrompt(PrintWriter writer) {
-        writer.print("\r" + ESC + "[K> " + input.content());
+        StatusSnapshot status = orchestrator == null ? null : orchestrator.status();
+        drawPrompt(writer, status);
+    }
+
+    private void drawPrompt(PrintWriter writer, StatusSnapshot status) {
+        writer.print("\r" + ESC + "[K" + promptContext(status) + "> " + input.content());
         int columnsAfterCursor = input.columnsAfterCursor();
         if (columnsAfterCursor > 0) {
             writer.print(ESC + "[" + columnsAfterCursor + "D");
@@ -340,7 +400,7 @@ public class LanternaLunaTui implements LunaTui {
             }
             terminal.close();
         } catch (IOException ignored) {
-            // Nothing useful can be done during terminal shutdown.
+            // 终端关闭阶段已经没有可恢复动作。
         }
     }
 

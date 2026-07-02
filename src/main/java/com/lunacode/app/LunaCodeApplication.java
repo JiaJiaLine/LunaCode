@@ -1,17 +1,32 @@
 package com.lunacode.app;
 
-import com.lunacode.interaction.BlockingUserQuestionBroker;
 import com.lunacode.config.ConfigLoader;
 import com.lunacode.config.ProviderConfig;
-import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.DefaultConversationManager;
+import com.lunacode.instructions.DefaultProjectInstructionLoader;
+import com.lunacode.interaction.BlockingUserQuestionBroker;
 import com.lunacode.mcp.McpClientManager;
 import com.lunacode.mcp.McpDiscoveryResult;
+import com.lunacode.memory.DefaultAutoMemoryUpdater;
+import com.lunacode.memory.DefaultMemoryContextLoader;
+import com.lunacode.memory.MarkdownMemoryStore;
+import com.lunacode.memory.MemoryCommandHandler;
+import com.lunacode.memory.MemoryRuntimeState;
+import com.lunacode.memory.ProviderMemoryModelClient;
 import com.lunacode.orchestrator.DefaultChatOrchestrator;
 import com.lunacode.permission.DefaultPathSandbox;
 import com.lunacode.permission.PathSandbox;
+import com.lunacode.prompt.EnvironmentContextCollector;
+import com.lunacode.prompt.MessageChannelBuilder;
+import com.lunacode.prompt.PromptContextBuilder;
+import com.lunacode.prompt.StaticSystemPromptBuilder;
 import com.lunacode.provider.ChatProvider;
 import com.lunacode.provider.ChatProviderFactory;
+import com.lunacode.session.DefaultSessionService;
+import com.lunacode.session.JsonlSessionStore;
+import com.lunacode.session.SessionBackedConversationManager;
+import com.lunacode.session.SessionCommandHandler;
+import com.lunacode.session.SessionRecoveryResult;
 import com.lunacode.tool.AskUserQuestionTool;
 import com.lunacode.tool.BashTool;
 import com.lunacode.tool.BubblewrapCommandSandbox;
@@ -50,7 +65,17 @@ public class LunaCodeApplication {
             return;
         }
 
-        ConversationManager conversationManager = new DefaultConversationManager();
+        Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
+        JsonlSessionStore sessionStore = new JsonlSessionStore(workspaceRoot);
+        DefaultSessionService sessionService = new DefaultSessionService(sessionStore, config.context());
+        SessionBackedConversationManager conversationManager = new SessionBackedConversationManager(new DefaultConversationManager(), sessionService);
+        SessionRecoveryResult recoveryResult = sessionService.restoreLatestOrCreate();
+        conversationManager.restoreHistory(recoveryResult.messages());
+
+        MarkdownMemoryStore memoryStore = new MarkdownMemoryStore(workspaceRoot);
+        DefaultMemoryContextLoader memoryContextLoader = new DefaultMemoryContextLoader(memoryStore);
+        MemoryRuntimeState memoryRuntimeState = new MemoryRuntimeState(config.memory().autoUpdate());
+
         ChatProvider provider;
         try {
             provider = new ChatProviderFactory().create(config.protocol());
@@ -59,7 +84,6 @@ public class LunaCodeApplication {
             return;
         }
 
-        Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
         PathSandbox pathSandbox;
         try {
             pathSandbox = new DefaultPathSandbox(workspaceRoot, config.sandbox());
@@ -108,6 +132,27 @@ public class LunaCodeApplication {
         DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);
 
         AtomicReference<LanternaLunaTui> tuiRef = new AtomicReference<>();
+        Runnable requestRender = () -> {
+            LanternaLunaTui tui = tuiRef.get();
+            if (tui != null) {
+                tui.requestRender();
+            }
+        };
+        DefaultAutoMemoryUpdater autoMemoryUpdater = new DefaultAutoMemoryUpdater(
+                new ProviderMemoryModelClient(provider, config),
+                memoryStore,
+                memoryRuntimeState,
+                requestRender
+        );
+        MemoryCommandHandler memoryCommandHandler = new MemoryCommandHandler(memoryStore, memoryContextLoader, memoryRuntimeState);
+        PromptContextBuilder promptContextBuilder = new PromptContextBuilder(
+                new StaticSystemPromptBuilder(),
+                new EnvironmentContextCollector(),
+                new MessageChannelBuilder(),
+                new DefaultProjectInstructionLoader(),
+                memoryContextLoader
+        );
+
         DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(
                 conversationManager,
                 provider,
@@ -115,12 +160,14 @@ public class LunaCodeApplication {
                 registry,
                 toolExecutor,
                 questionBroker,
-                () -> {
-                    LanternaLunaTui tui = tuiRef.get();
-                    if (tui != null) {
-                        tui.requestRender();
-                    }
-                }
+                new SessionCommandHandler(sessionService, conversationManager),
+                memoryCommandHandler,
+                autoMemoryUpdater,
+                memoryRuntimeState,
+                () -> sessionService.currentSession().id(),
+                memoryContextLoader::loadForPrompt,
+                promptContextBuilder,
+                requestRender
         );
         LanternaLunaTui tui = new LanternaLunaTui(conversationManager, orchestrator);
         tuiRef.set(tui);

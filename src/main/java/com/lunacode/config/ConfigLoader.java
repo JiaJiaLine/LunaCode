@@ -3,6 +3,7 @@ package com.lunacode.config;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.lunacode.memory.MemoryConfig;
 import com.lunacode.permission.PermissionMode;
 
 import java.io.IOException;
@@ -62,7 +63,8 @@ public class ConfigLoader {
         SandboxConfig sandbox = toSandboxConfig(raw.sandbox());
         McpConfig mcp = toMergedMcpConfig(readUserMcp(path), raw.mcp());
         ContextConfig context = toContextConfig(raw.context());
-        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp, context);
+        MemoryConfig memory = toMemoryConfig(raw.memory());
+        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp, context, memory);
     }
 
     private RawMcp readUserMcp(Path projectConfigPath) {
@@ -194,6 +196,14 @@ public class ConfigLoader {
                         ? defaults.sessionRoot()
                         : Path.of(raw.sessionRoot().trim())
         );
+    }
+
+    private MemoryConfig toMemoryConfig(RawMemory raw) {
+        MemoryConfig defaults = MemoryConfig.defaults();
+        if (raw == null || raw.autoUpdate() == null) {
+            return defaults;
+        }
+        return new MemoryConfig(raw.autoUpdate());
     }
 
     private McpConfig toMergedMcpConfig(RawMcp userMcp, RawMcp projectMcp) {
@@ -338,7 +348,8 @@ public class ConfigLoader {
             RawPermissions permissions,
             RawSandbox sandbox,
             RawMcp mcp,
-            RawContext context
+            RawContext context,
+            RawMemory memory
     ) {}
 
     private record RawThinking(
@@ -382,6 +393,10 @@ public class ConfigLoader {
             @JsonProperty("prompt_too_long_group_retries") Integer promptTooLongGroupRetries,
             @JsonProperty("prompt_too_long_drop_fraction") Double promptTooLongDropFraction,
             @JsonProperty("session_root") String sessionRoot
+    ) {}
+
+    private record RawMemory(
+            @JsonProperty("auto_update") Boolean autoUpdate
     ) {}
 
     private record RawMcp(

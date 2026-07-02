@@ -1,5 +1,7 @@
 package com.lunacode.config;
 
+import com.lunacode.memory.MemoryConfig;
+
 import java.net.URI;
 
 public record ProviderConfig(
@@ -12,22 +14,27 @@ public record ProviderConfig(
         PermissionConfig permissions,
         SandboxConfig sandbox,
         McpConfig mcp,
-        ContextConfig context
+        ContextConfig context,
+        MemoryConfig memory
 ) {
     public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking) {
-        this(protocol, model, baseUrl, apiKey, thinking, AgentConfig.defaults(), PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty(), ContextConfig.defaults());
+        this(protocol, model, baseUrl, apiKey, thinking, AgentConfig.defaults(), PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty(), ContextConfig.defaults(), MemoryConfig.defaults());
     }
 
     public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking, AgentConfig agent) {
-        this(protocol, model, baseUrl, apiKey, thinking, agent, PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty(), ContextConfig.defaults());
+        this(protocol, model, baseUrl, apiKey, thinking, agent, PermissionConfig.defaults(), SandboxConfig.defaults(), McpConfig.empty(), ContextConfig.defaults(), MemoryConfig.defaults());
     }
 
     public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking, AgentConfig agent, PermissionConfig permissions, SandboxConfig sandbox) {
-        this(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, McpConfig.empty(), ContextConfig.defaults());
+        this(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, McpConfig.empty(), ContextConfig.defaults(), MemoryConfig.defaults());
     }
 
     public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking, AgentConfig agent, PermissionConfig permissions, SandboxConfig sandbox, McpConfig mcp) {
-        this(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp, ContextConfig.defaults());
+        this(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp, ContextConfig.defaults(), MemoryConfig.defaults());
+    }
+
+    public ProviderConfig(String protocol, String model, URI baseUrl, String apiKey, ThinkingConfig thinking, AgentConfig agent, PermissionConfig permissions, SandboxConfig sandbox, McpConfig mcp, ContextConfig context) {
+        this(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp, context, MemoryConfig.defaults());
     }
 
     public ProviderConfig {
@@ -48,6 +55,9 @@ public record ProviderConfig(
         }
         if (context == null) {
             context = ContextConfig.defaults();
+        }
+        if (memory == null) {
+            memory = MemoryConfig.defaults();
         }
     }
 }
