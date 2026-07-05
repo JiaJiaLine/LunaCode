@@ -1,0 +1,20 @@
+- rule: "Bash(dir F:\\LunaCode\\SkillTest 2>nul || echo DIR_NOT_EXIST)"
+  effect: allow
+
+- rule: "Bash(mkdir F:\\LunaCode\\SkillTest 2>nul && mkdir F:\\LunaCode\\SkillTest\\pet-shop 2>nul && echo DONE)"
+  effect: allow
+
+- rule: "Bash(mkdir F:\\LunaCode\\SkillTest\\pet-shop 2>nul && echo DONE)"
+  effect: allow
+
+- rule: "Bash(dir F:\\LunaCode\\SkillTest\\pet-shop 2>&1)"
+  effect: allow
+
+- rule: "WriteFile(/project/SkillTest/pet-shop/index.html)"
+  effect: allow
+
+- rule: "WriteFile(/project/SkillTest/pet-shop/style.css)"
+  effect: allow
+
+- rule: "WriteFile(/project/SkillTest/pet-shop/main.js)"
+  effect: allow

@@ -33,6 +33,8 @@ import com.lunacode.conversation.ConversationMessageSnapshot;
 import com.lunacode.conversation.MessageRole;
 import com.lunacode.conversation.MessageStatus;
 import com.lunacode.conversation.TokenUsage;
+import com.lunacode.hook.HookRuntime;
+import com.lunacode.hook.NoOpHookRuntime;
 import com.lunacode.interaction.BlockingPermissionConfirmationBroker;
 import com.lunacode.interaction.BlockingUserQuestionBroker;
 import com.lunacode.memory.AutoMemoryUpdater;
@@ -113,6 +115,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private final MemoryRuntimeState memoryRuntimeState;
     private final Supplier<String> sessionIdSupplier;
     private final Supplier<MemoryIndexSnapshot> memoryIndexSupplier;
+    private final HookRuntime hookRuntime;
     private final SlashCommandDispatcher commandDispatcher;
     private final SlashCommandCompleter commandCompleter;
     private final SlashCommandRegistry commandRegistry;
@@ -174,11 +177,49 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
                 sessionIdSupplier,
                 memoryIndexSupplier,
                 promptContextBuilder,
+                NoOpHookRuntime.instance(),
                 onChange,
                 newAgentExecutor()
         );
     }
 
+
+    public DefaultChatOrchestrator(
+            ConversationManager conversationManager,
+            ChatProvider provider,
+            ProviderConfig config,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
+            BlockingUserQuestionBroker questionBroker,
+            SessionCommandHandler sessionCommandHandler,
+            MemoryCommandHandler memoryCommandHandler,
+            AutoMemoryUpdater autoMemoryUpdater,
+            MemoryRuntimeState memoryRuntimeState,
+            Supplier<String> sessionIdSupplier,
+            Supplier<MemoryIndexSnapshot> memoryIndexSupplier,
+            PromptContextBuilder promptContextBuilder,
+            HookRuntime hookRuntime,
+            Runnable onChange
+    ) {
+        this(
+                conversationManager,
+                provider,
+                config,
+                toolRegistry,
+                toolExecutor,
+                questionBroker,
+                sessionCommandHandler,
+                memoryCommandHandler,
+                autoMemoryUpdater,
+                memoryRuntimeState,
+                sessionIdSupplier,
+                memoryIndexSupplier,
+                promptContextBuilder,
+                hookRuntime,
+                onChange,
+                newAgentExecutor()
+        );
+    }
     DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, Runnable onChange, ExecutorService executor) {
         this(conversationManager, provider, config, new DefaultToolRegistry(), null, onChange, executor);
     }
@@ -206,6 +247,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
                 null,
                 null,
                 null,
+                NoOpHookRuntime.instance(),
                 onChange,
                 executor
         );
@@ -228,6 +270,44 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             Runnable onChange,
             ExecutorService executor
     ) {
+        this(
+                conversationManager,
+                provider,
+                config,
+                toolRegistry,
+                toolExecutor,
+                questionBroker,
+                sessionCommandHandler,
+                memoryCommandHandler,
+                autoMemoryUpdater,
+                memoryRuntimeState,
+                sessionIdSupplier,
+                memoryIndexSupplier,
+                promptContextBuilder,
+                NoOpHookRuntime.instance(),
+                onChange,
+                executor
+        );
+    }
+
+    DefaultChatOrchestrator(
+            ConversationManager conversationManager,
+            ChatProvider provider,
+            ProviderConfig config,
+            ToolRegistry toolRegistry,
+            ToolExecutor toolExecutor,
+            BlockingUserQuestionBroker questionBroker,
+            SessionCommandHandler sessionCommandHandler,
+            MemoryCommandHandler memoryCommandHandler,
+            AutoMemoryUpdater autoMemoryUpdater,
+            MemoryRuntimeState memoryRuntimeState,
+            Supplier<String> sessionIdSupplier,
+            Supplier<MemoryIndexSnapshot> memoryIndexSupplier,
+            PromptContextBuilder promptContextBuilder,
+            HookRuntime hookRuntime,
+            Runnable onChange,
+            ExecutorService executor
+    ) {
         this.conversationManager = Objects.requireNonNull(conversationManager, "conversationManager");
         this.provider = Objects.requireNonNull(provider, "provider");
         this.config = Objects.requireNonNull(config, "config");
@@ -240,6 +320,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.memoryRuntimeState = memoryRuntimeState;
         this.sessionIdSupplier = sessionIdSupplier;
         this.memoryIndexSupplier = memoryIndexSupplier;
+        this.hookRuntime = hookRuntime == null ? NoOpHookRuntime.instance() : hookRuntime;
         this.permissionBroker = new BlockingPermissionConfirmationBroker();
         this.onChange = onChange == null ? () -> {} : onChange;
         this.executor = Objects.requireNonNull(executor, "executor");
@@ -249,7 +330,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.commandRegistry = commands.registry();
         this.commandDispatcher = commands.dispatcher();
         this.commandCompleter = commands.completer();
-        this.contextManager = DefaultContextManager.createDefault(workspaceRoot, config.context(), new com.lunacode.tool.SensitiveValueMasker(java.util.List.of(config.apiKey())));
+        this.contextManager = DefaultContextManager.createDefault(workspaceRoot, config.context(), new com.lunacode.tool.SensitiveValueMasker(java.util.List.of(config.apiKey())), this.hookRuntime, this::currentSessionId);
         this.lastPlanFile = resolvePlanFile(workspaceRoot);
         this.permissionModeSession = new PermissionModeSession(config.permissions().mode());
         this.permissionModeBeforePlan = this.permissionModeSession.currentMode();
@@ -261,10 +342,10 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private record CommandBundle(SlashCommandRegistry registry, SlashCommandDispatcher dispatcher, SlashCommandCompleter completer) {
     }
 
-    private static CommandBundle defaultCommandBundle() {
+    private CommandBundle defaultCommandBundle() {
         SlashCommandRegistry registry = new SlashCommandRegistry();
         BuiltinSlashCommands.registerAll(registry);
-        return new CommandBundle(registry, new SlashCommandDispatcher(registry, new SlashCommandParser()), new SlashCommandCompleter(registry));
+        return new CommandBundle(registry, new SlashCommandDispatcher(registry, new SlashCommandParser(), hookRuntime, this::currentSessionId, () -> workspaceRoot), new SlashCommandCompleter(registry));
     }
 
     private static ExecutorService newAgentExecutor() {
@@ -279,9 +360,9 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         PathSandbox pathSandbox = new DefaultPathSandbox(workspaceRoot, config.sandbox());
         SensitivePathPolicy sensitivePathPolicy = new SensitivePathPolicy();
         DefaultPermissionEngine permissionEngine = new DefaultPermissionEngine(permissionRuleStore, new PermissionTargetExtractor(pathSandbox, new BashPathScanner(), sensitivePathPolicy), new PermissionRuleMatcher(), new PermissionModePolicy(), new DangerousCommandBlacklist());
-        AgentToolRunner toolRunner = new AgentToolRunner(toolRegistry, toolExecutor, new ToolBatchPlanner(), new DefaultToolPermissionGateway(workspaceRoot, permissionEngine), permissionBroker, permissionRuleStore);
+        AgentToolRunner toolRunner = new AgentToolRunner(toolRegistry, toolExecutor, new ToolBatchPlanner(), new DefaultToolPermissionGateway(workspaceRoot, permissionEngine), permissionBroker, permissionRuleStore, hookRuntime, this::currentSessionId);
         AgentTurnRunner turnRunner = new AgentTurnRunner(conversationManager, provider);
-        return new DefaultAgentLoop(conversationManager, config, toolRegistry, toolRunner, turnRunner, new LoopDecisionMaker(), promptContextBuilder, contextManager);
+        return new DefaultAgentLoop(conversationManager, config, toolRegistry, toolRunner, turnRunner, new LoopDecisionMaker(), promptContextBuilder, contextManager, hookRuntime, this::currentSessionId);
     }
 
     @Override

@@ -5,6 +5,25 @@ import com.lunacode.command.SlashCommandRegistry;
 import com.lunacode.config.ConfigLoader;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.DefaultConversationManager;
+import com.lunacode.hook.CommandHookActionExecutor;
+import com.lunacode.hook.DefaultHookActionExecutor;
+import com.lunacode.hook.DefaultHookRuntime;
+import com.lunacode.hook.FileHookLogWriter;
+import com.lunacode.hook.HookConditionEvaluator;
+import com.lunacode.hook.HookConfig;
+import com.lunacode.hook.HookConfigException;
+import com.lunacode.hook.HookConfigLoader;
+import com.lunacode.hook.HookContext;
+import com.lunacode.hook.HookEventName;
+import com.lunacode.hook.HookExecutionScope;
+import com.lunacode.hook.HookRuntime;
+import com.lunacode.hook.HttpHookActionExecutor;
+import com.lunacode.hook.InMemoryHookOnceTracker;
+import com.lunacode.hook.InMemoryHookReminderStore;
+import com.lunacode.hook.NoOpHookRuntime;
+import com.lunacode.hook.PromptHookActionExecutor;
+import com.lunacode.hook.ShellCommandRunner;
+import com.lunacode.hook.SubAgentPlaceholderActionExecutor;
 import com.lunacode.instructions.DefaultProjectInstructionLoader;
 import com.lunacode.interaction.BlockingUserQuestionBroker;
 import com.lunacode.mcp.McpClientManager;
@@ -23,6 +42,7 @@ import com.lunacode.prompt.EnvironmentContextCollector;
 import com.lunacode.prompt.MessageChannelBuilder;
 import com.lunacode.prompt.PromptContextBuilder;
 import com.lunacode.prompt.StaticSystemPromptBuilder;
+import com.lunacode.prompt.SystemReminderBuilder;
 import com.lunacode.provider.ChatProvider;
 import com.lunacode.provider.ChatProviderFactory;
 import com.lunacode.session.DefaultSessionService;
@@ -164,6 +184,33 @@ public class LunaCodeApplication {
         );
         DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);
 
+        InMemoryHookReminderStore hookReminderStore = new InMemoryHookReminderStore();
+        HookRuntime hookRuntime;
+        try {
+            HookConfig hookConfig = new HookConfigLoader().load(workspaceRoot, userHome);
+            hookRuntime = hookConfig.isEmpty()
+                    ? NoOpHookRuntime.instance()
+                    : new DefaultHookRuntime(
+                            hookConfig,
+                            new HookConditionEvaluator(),
+                            new DefaultHookActionExecutor(
+                                    new CommandHookActionExecutor(new ShellCommandRunner(), toolContext),
+                                    new PromptHookActionExecutor(),
+                                    new HttpHookActionExecutor(),
+                                    new SubAgentPlaceholderActionExecutor()
+                            ),
+                            new InMemoryHookOnceTracker(),
+                            hookReminderStore,
+                            new FileHookLogWriter(workspaceRoot, masker)
+                    );
+        } catch (HookConfigException e) {
+            System.err.println(e.getMessage());
+            return;
+        }
+        HookExecutionScope applicationHookScope = new HookExecutionScope(sessionService.currentSession().id(), 0, workspaceRoot);
+        hookRuntime.emit(HookEventName.STARTUP, HookContext.empty(HookEventName.STARTUP), applicationHookScope);
+        hookRuntime.emit(HookEventName.SESSION_START, HookContext.empty(HookEventName.SESSION_START), applicationHookScope);
+
         AtomicReference<LanternaLunaTui> tuiRef = new AtomicReference<>();
         Runnable requestRender = () -> {
             LanternaLunaTui tui = tuiRef.get();
@@ -181,7 +228,7 @@ public class LunaCodeApplication {
         PromptContextBuilder promptContextBuilder = new PromptContextBuilder(
                 new StaticSystemPromptBuilder(),
                 new EnvironmentContextCollector(),
-                new MessageChannelBuilder(),
+                new MessageChannelBuilder(new SystemReminderBuilder(), hookReminderStore, () -> sessionService.currentSession().id()),
                 new DefaultProjectInstructionLoader(),
                 memoryContextLoader,
                 new DefaultSkillPromptContextLoader(skillCatalog)
@@ -201,6 +248,7 @@ public class LunaCodeApplication {
                 () -> sessionService.currentSession().id(),
                 memoryContextLoader::loadForPrompt,
                 promptContextBuilder,
+                hookRuntime,
                 requestRender
         );
         orchestrator.configureSkills(skillCatalog, skillPlanner, null);
@@ -212,6 +260,9 @@ public class LunaCodeApplication {
         try {
             tui.start();
         } finally {
+            hookRuntime.emit(HookEventName.SESSION_END, HookContext.empty(HookEventName.SESSION_END), applicationHookScope);
+            hookRuntime.emit(HookEventName.SHUTDOWN, HookContext.empty(HookEventName.SHUTDOWN), applicationHookScope);
+            hookRuntime.close();
             mcpManager.closeAsync().join();
         }
     }
