@@ -2,6 +2,7 @@ package com.lunacode.tool;
 
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.lunacode.runtime.AgentMode;
+import com.lunacode.skill.ToolAccessPolicy;
 
 import java.util.List;
 import java.util.Optional;
@@ -33,13 +34,25 @@ public interface ToolRegistry {
         return List.of();
     }
 
+    default List<DeferredToolSummary> deferredToolSummaries(ToolAccessPolicy policy) {
+        return deferredToolSummaries();
+    }
+
     default ToolDeclarationSet declarationsForModel(AgentMode mode) {
         return new ToolDeclarationSet(toAPIFormat(mode), List.of());
+    }
+
+    default ToolDeclarationSet declarationsForModel(AgentMode mode, ToolAccessPolicy policy) {
+        return declarationsForModel(mode);
     }
 
     ArrayNode toAPIFormat();
 
     default ArrayNode toAPIFormat(AgentMode mode) {
         return toAPIFormat();
+    }
+
+    default ArrayNode toAPIFormat(AgentMode mode, ToolAccessPolicy policy) {
+        return toAPIFormat(mode);
     }
 }

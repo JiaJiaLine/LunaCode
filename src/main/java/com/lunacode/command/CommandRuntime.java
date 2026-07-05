@@ -1,6 +1,7 @@
 package com.lunacode.command;
 
 import com.lunacode.permission.PermissionMode;
+import com.lunacode.skill.SkillInvocationRequest;
 
 public interface CommandRuntime {
     boolean isBusy();
@@ -26,6 +27,8 @@ public interface CommandRuntime {
     void clearVisibleScreen();
 
     void sendUserMessage(String message);
+
+    void submitSkillInvocation(SkillInvocationRequest request);
 
     void compactContext();
 

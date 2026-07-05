@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lunacode.prompt.PromptBundle;
 import com.lunacode.prompt.SystemReminder;
 import com.lunacode.prompt.SystemReminderRenderer;
+import com.lunacode.prompt.SkillPromptRenderer;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.ApiMessage;
 import com.lunacode.conversation.ContentBlock;
@@ -16,6 +17,7 @@ public final class AnthropicPromptAdapter implements ProviderPromptAdapter {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final SystemReminderRenderer reminderRenderer = new SystemReminderRenderer();
+    private final SkillPromptRenderer skillPromptRenderer = new SkillPromptRenderer();
 
     @Override
     public String buildRequestBody(PromptBundle promptBundle, ProviderConfig config) throws Exception {
@@ -59,6 +61,12 @@ public final class AnthropicPromptAdapter implements ProviderPromptAdapter {
         ObjectNode environmentBlock = system.addObject();
         environmentBlock.put("type", "text");
         environmentBlock.put("text", promptBundle.system().environmentContext().render());
+        String skillContext = skillPromptRenderer.render(promptBundle.messages().skillContext());
+        if (!skillContext.isBlank()) {
+            ObjectNode skillBlock = system.addObject();
+            skillBlock.put("type", "text");
+            skillBlock.put("text", skillContext);
+        }
         promptBundle.messages().projectInstructions().filter(instructions -> !instructions.isEmpty()).ifPresent(instructions -> {
             ObjectNode block = system.addObject();
             block.put("type", "text");

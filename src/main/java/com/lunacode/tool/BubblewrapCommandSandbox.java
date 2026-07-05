@@ -52,7 +52,7 @@ public final class BubblewrapCommandSandbox implements CommandSandbox {
             bwrap.add("--tmpfs");
             bwrap.add("/tmp");
             for (SandboxRoot root : roots == null ? List.<SandboxRoot>of() : roots) {
-                bwrap.add("--bind");
+                bwrap.add(root.readOnly() ? "--ro-bind" : "--bind");
                 bwrap.add(shellQuote(root.realPath().toString()));
                 bwrap.add(shellQuote(root.realPath().toString()));
             }

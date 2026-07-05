@@ -2,6 +2,7 @@ package com.lunacode.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lunacode.permission.PathIntent;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -53,7 +54,7 @@ public class WriteFileTool implements Tool {
             return ToolResult.error(validation.message(), Map.of("errorType", "invalid_arguments", "code", validation.code()));
         }
         try {
-            Path path = resolver.resolveInsideWorkspace(text(input, "path", "file_path"));
+            Path path = resolver.resolveInsideWorkspace(text(input, "path", "file_path"), PathIntent.WRITE);
             String content = text(input, "content", "text", "contents");
             WriteSummary summary = writeText(path, content);
             Map<String, Object> metadata = new LinkedHashMap<>();

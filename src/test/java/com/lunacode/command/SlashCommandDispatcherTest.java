@@ -2,6 +2,7 @@ package com.lunacode.command;
 
 import com.lunacode.permission.PermissionMode;
 import com.lunacode.runtime.AgentMode;
+import com.lunacode.skill.SkillInvocationRequest;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -87,6 +88,7 @@ class SlashCommandDispatcherTest {
         @Override public void cancelCurrentRun() { cancelCalls++; }
         @Override public void clearVisibleScreen() {}
         @Override public void sendUserMessage(String message) {}
+        @Override public void submitSkillInvocation(SkillInvocationRequest request) {}
         @Override public void compactContext() {}
         @Override public void enterPlanMode() {}
         @Override public void enterDefaultMode() {}

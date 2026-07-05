@@ -9,10 +9,12 @@ import com.lunacode.conversation.ApiMessage;
 import com.lunacode.prompt.PromptBundle;
 import com.lunacode.prompt.SystemReminder;
 import com.lunacode.prompt.SystemReminderRenderer;
+import com.lunacode.prompt.SkillPromptRenderer;
 
 public final class OpenAiPromptAdapter implements ProviderPromptAdapter {
     private final ObjectMapper mapper = new ObjectMapper();
     private final SystemReminderRenderer reminderRenderer = new SystemReminderRenderer();
+    private final SkillPromptRenderer skillPromptRenderer = new SkillPromptRenderer();
 
     @Override
     public String buildRequestBody(PromptBundle promptBundle, ProviderConfig config) throws Exception {
@@ -23,6 +25,10 @@ public final class OpenAiPromptAdapter implements ProviderPromptAdapter {
         ArrayNode messageArray = root.putArray("messages");
         addMessage(messageArray, "system", promptBundle.system().staticPrompt().render());
         addMessage(messageArray, "developer", promptBundle.system().environmentContext().render());
+        String skillContext = skillPromptRenderer.render(promptBundle.messages().skillContext());
+        if (!skillContext.isBlank()) {
+            addMessage(messageArray, "developer", skillContext);
+        }
         promptBundle.messages().projectInstructions()
                 .filter(context -> !context.isEmpty())
                 .ifPresent(context -> addMessage(messageArray, "developer", context.render()));

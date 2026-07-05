@@ -113,6 +113,13 @@ public final class AgentToolRunner {
     private ToolExecutionRecord executeOne(ToolUse toolUse, AgentRunConfig config, AgentEventSink sink) {
         long started = System.nanoTime();
         ToolResult result;
+        if (config.toolAccessPolicy() != null && !config.toolAccessPolicy().allows(toolUse.name())) {
+            result = ToolResult.error("工具不存在或当前 Skill 不允许使用: " + toolUse.name(), Map.of("errorType", "tool_not_found"));
+            Duration duration = Duration.ofNanos(System.nanoTime() - started);
+            ToolExecutionRecord record = new ToolExecutionRecord(toolUse, result, duration);
+            emit(sink, new AgentEvent.ToolResultReady(toolUse.id(), toolUse.name(), result, duration));
+            return record;
+        }
         Tool tool = toolRegistry.get(toolUse.name()).orElse(null);
         if (tool == null) {
             result = ToolResult.error("工具不存在或已禁用: " + toolUse.name(), Map.of("errorType", "tool_not_found"));

@@ -2,6 +2,7 @@ package com.lunacode.command;
 
 import com.lunacode.permission.PermissionMode;
 import com.lunacode.runtime.AgentMode;
+import com.lunacode.skill.SkillInvocationRequest;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -177,6 +178,7 @@ class BuiltinSlashCommandsTest {
         @Override public void cancelCurrentRun() { cancelCalls++; }
         @Override public void clearVisibleScreen() { clearCalls++; }
         @Override public void sendUserMessage(String message) { sentUserMessage = message; }
+        @Override public void submitSkillInvocation(SkillInvocationRequest request) {}
         @Override public void compactContext() { compactCalls++; }
         @Override public void enterPlanMode() { planCalls++; }
         @Override public void enterDefaultMode() { defaultCalls++; }
