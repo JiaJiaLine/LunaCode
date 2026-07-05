@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.lunacode.runtime.AgentMode;
+import com.lunacode.skill.ToolAccessPolicy;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -104,10 +105,15 @@ public class DefaultToolRegistry implements ToolRegistry {
 
     @Override
     public synchronized List<DeferredToolSummary> deferredToolSummaries() {
+        return deferredToolSummaries(null);
+    }
+
+    @Override
+    public synchronized List<DeferredToolSummary> deferredToolSummaries(ToolAccessPolicy policy) {
         List<DeferredToolSummary> result = new ArrayList<>();
         for (String name : enabled) {
             Tool tool = tools.get(name);
-            if (tool != null && tool.shouldDefer() && !discoveredDeferred.contains(name)) {
+            if (tool != null && policyAllows(policy, tool.name()) && tool.shouldDefer() && !discoveredDeferred.contains(name)) {
                 result.add(new DeferredToolSummary(
                         tool.name(),
                         limit(descriptionEnhancer.enhance(tool), 240),
@@ -120,7 +126,12 @@ public class DefaultToolRegistry implements ToolRegistry {
 
     @Override
     public synchronized ToolDeclarationSet declarationsForModel(AgentMode mode) {
-        return new ToolDeclarationSet(visibleTools(mode), deferredToolSummaries());
+        return declarationsForModel(mode, null);
+    }
+
+    @Override
+    public synchronized ToolDeclarationSet declarationsForModel(AgentMode mode, ToolAccessPolicy policy) {
+        return new ToolDeclarationSet(visibleTools(mode, policy), deferredToolSummaries(policy));
     }
 
     @Override
@@ -130,14 +141,22 @@ public class DefaultToolRegistry implements ToolRegistry {
 
     @Override
     public synchronized ArrayNode toAPIFormat(AgentMode mode) {
-        return visibleTools(mode);
+        return visibleTools(mode, null);
     }
 
-    private ArrayNode visibleTools(AgentMode mode) {
+    @Override
+    public synchronized ArrayNode toAPIFormat(AgentMode mode, ToolAccessPolicy policy) {
+        return visibleTools(mode, policy);
+    }
+
+    private ArrayNode visibleTools(AgentMode mode, ToolAccessPolicy policy) {
         ArrayNode array = mapper.createArrayNode();
         for (String name : enabled) {
             Tool tool = tools.get(name);
             if (tool == null) {
+                continue;
+            }
+            if (!policyAllows(policy, tool.name())) {
                 continue;
             }
             if (mode != AgentMode.PLAN && "AskUserQuestion".equals(tool.name())) {
@@ -149,6 +168,10 @@ public class DefaultToolRegistry implements ToolRegistry {
             array.add(toApiNode(tool));
         }
         return array;
+    }
+
+    private boolean policyAllows(ToolAccessPolicy policy, String name) {
+        return policy == null || policy.allows(name);
     }
 
     private ObjectNode toApiNode(Tool tool) {
@@ -191,6 +214,7 @@ public class DefaultToolRegistry implements ToolRegistry {
             case "Glob" -> registerAliases(canonical, "glob", "find_files", "list_files");
             case "Grep" -> registerAliases(canonical, "grep", "search", "search_files");
             case "AskUserQuestion" -> registerAliases(canonical, "ask_user_question", "ask", "question");
+            case "LoadSkill" -> registerAliases(canonical, "load_skill", "loadskill", "skill");
             default -> {
             }
         }

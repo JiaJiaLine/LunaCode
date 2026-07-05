@@ -11,7 +11,10 @@ import com.lunacode.context.CompactTrigger;
 import com.lunacode.context.ContextManager;
 import com.lunacode.context.ContextPreparationRequest;
 import com.lunacode.context.ContextPreparationResult;
+import com.lunacode.context.ExternalizedToolResultRef;
+import com.lunacode.conversation.ApiMessage;
 import com.lunacode.conversation.ContentBlock;
+import com.lunacode.conversation.ConversationCompactionAccess;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.MessageRole;
 import com.lunacode.conversation.TokenUsage;
@@ -19,9 +22,12 @@ import com.lunacode.prompt.PromptBundle;
 import com.lunacode.prompt.PromptContextBuilder;
 import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.runtime.CancellationToken;
+import com.lunacode.skill.DefaultSkillInvocationPlanner;
+import com.lunacode.tool.ToolDeclarationSet;
 import com.lunacode.tool.ToolExecutionRecord;
 import com.lunacode.tool.ToolRegistry;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -72,13 +78,16 @@ public final class DefaultAgentLoop implements AgentLoop {
         Objects.requireNonNull(request, "request");
         CancellationToken token = cancellationToken == null ? new CancellationToken() : cancellationToken;
         AgentRunConfig config = request.config();
+        ProviderConfig effectiveProviderConfig = effectiveProviderConfig(config);
         conversationManager.addMessage(MessageRole.USER, request.userMessage());
+        List<LoadedSkillToolResult> loadedSkillToolResults = new ArrayList<>();
         TokenUsage cumulativeUsage = TokenUsage.unknown();
         int consecutiveUnknownTools = 0;
         int turns = 0;
 
         while (true) {
             if (token.isCancellationRequested()) {
+                cleanupLoadedSkillResults(loadedSkillToolResults);
                 emit(sink, new AgentEvent.ErrorOccurred("用户已取消当前请求", null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
@@ -86,7 +95,7 @@ public final class DefaultAgentLoop implements AgentLoop {
 
             int turnIndex = turns + 1;
             ContextPreparationResult contextResult = contextManager.prepareBeforeTurn(new ContextPreparationRequest(
-                    providerConfig,
+                    effectiveProviderConfig,
                     config,
                     turnIndex,
                     conversationManager,
@@ -97,23 +106,25 @@ public final class DefaultAgentLoop implements AgentLoop {
                     CompactTrigger.AUTO_CHECK
             ));
             if (!contextResult.proceed()) {
+                cleanupLoadedSkillResults(loadedSkillToolResults);
                 emit(sink, new AgentEvent.ErrorOccurred(contextResult.userVisibleMessage(), null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
 
+            ToolDeclarationSet declarations = toolRegistry.declarationsForModel(config.mode(), config.toolAccessPolicy());
             PromptBundle promptBundle = promptContextBuilder.build(
                     config,
                     turnIndex,
-                    conversationManager.toAPIFormat(),
-                    toolRegistry.declarationsForModel(config.mode())
+                    historyForModel(request, conversationManager.toAPIFormat()),
+                    declarations
             );
             AgentTurnInput input = new AgentTurnInput(
                     turnIndex,
                     promptBundle.system().staticPrompt().render(),
                     promptBundle,
                     promptBundle.messages().history(),
-                    providerConfig,
+                    effectiveProviderConfig,
                     promptBundle.toolDeclarations(),
                     cumulativeUsage,
                     sink
@@ -126,25 +137,30 @@ public final class DefaultAgentLoop implements AgentLoop {
             LoopContext context = new LoopContext(config, token, turnIndex, consecutiveUnknownTools, cumulativeUsage);
             LoopDecision decision = decisionMaker.decide(context, turnResult);
             if (decision instanceof LoopDecision.Complete) {
+                cleanupLoadedSkillResults(loadedSkillToolResults);
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
             if (decision instanceof LoopDecision.StopCancelled) {
+                cleanupLoadedSkillResults(loadedSkillToolResults);
                 emit(sink, new AgentEvent.ErrorOccurred("用户已取消当前请求", null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
             if (decision instanceof LoopDecision.StopError stopError) {
+                cleanupLoadedSkillResults(loadedSkillToolResults);
                 emit(sink, new AgentEvent.ErrorOccurred(stopError.summary(), null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
             if (decision instanceof LoopDecision.StopWithLimit stopWithLimit) {
+                cleanupLoadedSkillResults(loadedSkillToolResults);
                 emit(sink, new AgentEvent.ErrorOccurred("已达到 Agent Loop 最大迭代次数: " + stopWithLimit.maxIterations(), null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
             if (decision instanceof LoopDecision.StopUnknownTools stopUnknownTools) {
+                cleanupLoadedSkillResults(loadedSkillToolResults);
                 emit(sink, new AgentEvent.ErrorOccurred("连续未知工具达到阈值，已停止: " + stopUnknownTools.count(), null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
@@ -156,15 +172,112 @@ public final class DefaultAgentLoop implements AgentLoop {
                     continue;
                 }
                 contextManager.recordToolExecutions(records);
-                conversationManager.addUserToolResultMessage(records.stream()
+                String toolResultMessageId = conversationManager.addUserToolResultMessage(records.stream()
                         .map(record -> new ContentBlock.ToolResultBlock(
                                 record.toolUse().id(),
                                 record.result().content(),
                                 record.result().isError()))
                         .toList());
+                rememberLoadedSkillResults(toolResultMessageId, records, loadedSkillToolResults);
                 consecutiveUnknownTools = updateUnknownToolCount(consecutiveUnknownTools, records);
             }
         }
+    }
+
+    private ProviderConfig effectiveProviderConfig(AgentRunConfig config) {
+        if (config == null || config.modelOverride().isEmpty()) {
+            return providerConfig;
+        }
+        return new ProviderConfig(
+                providerConfig.protocol(),
+                config.modelOverride().orElseThrow(),
+                providerConfig.baseUrl(),
+                providerConfig.apiKey(),
+                providerConfig.thinking(),
+                providerConfig.agent(),
+                providerConfig.permissions(),
+                providerConfig.sandbox(),
+                providerConfig.mcp(),
+                providerConfig.context(),
+                providerConfig.memory()
+        );
+    }
+
+    private List<ApiMessage> historyForModel(AgentRequest request, List<ApiMessage> history) {
+        if (Objects.equals(request.userMessage(), request.modelMessage())) {
+            return history;
+        }
+        List<ApiMessage> copy = new ArrayList<>(history);
+        for (int i = copy.size() - 1; i >= 0; i--) {
+            ApiMessage message = copy.get(i);
+            if (!"user".equals(message.role())) {
+                continue;
+            }
+            if (message.content().size() == 1 && message.content().get(0) instanceof ContentBlock.Text text
+                    && Objects.equals(text.text(), request.userMessage())) {
+                copy.set(i, new ApiMessage("user", List.of(new ContentBlock.Text(request.modelMessage()))));
+                return List.copyOf(copy);
+            }
+        }
+        return history;
+    }
+
+    private void rememberLoadedSkillResults(
+            String toolResultMessageId,
+            List<ToolExecutionRecord> records,
+            List<LoadedSkillToolResult> loadedSkillToolResults
+    ) {
+        for (ToolExecutionRecord record : records) {
+            if (!DefaultSkillInvocationPlanner.LOAD_SKILL_TOOL_NAME.equals(record.toolUse().name())) {
+                continue;
+            }
+            if (record.result().isError()) {
+                continue;
+            }
+            Object loaded = record.result().metadata().get("loadedSkill");
+            if (!Boolean.TRUE.equals(loaded)) {
+                continue;
+            }
+            String skillName = String.valueOf(record.result().metadata().getOrDefault("skillName", ""));
+            loadedSkillToolResults.add(new LoadedSkillToolResult(
+                    toolResultMessageId,
+                    record.toolUse().id(),
+                    skillName,
+                    record.result().content().length()
+            ));
+        }
+    }
+
+    private void cleanupLoadedSkillResults(List<LoadedSkillToolResult> loadedSkillToolResults) {
+        if (loadedSkillToolResults.isEmpty()) {
+            return;
+        }
+        if (!(conversationManager instanceof ConversationCompactionAccess access)) {
+            return;
+        }
+        for (LoadedSkillToolResult result : loadedSkillToolResults) {
+            String replacementText = "[Skill /" + result.skillName() + " loaded for this run; full SOP removed after completion]";
+            ContentBlock.ToolResultBlock replacement = new ContentBlock.ToolResultBlock(result.toolUseId(), replacementText, false);
+            try {
+                access.replaceToolResultContent(
+                        result.messageId(),
+                        result.toolUseId(),
+                        replacement,
+                        new ExternalizedToolResultRef(
+                                result.messageId(),
+                                result.toolUseId(),
+                                DefaultSkillInvocationPlanner.LOAD_SKILL_TOOL_NAME,
+                                null,
+                                result.originalChars(),
+                                replacementText.length(),
+                                false
+                        )
+                );
+            } catch (RuntimeException ignored) {
+                // 清理失败不影响已经完成的用户请求。
+            }
+        }
+        loadedSkillToolResults.clear();
     }
 
     private int updateUnknownToolCount(int currentCount, List<ToolExecutionRecord> records) {
@@ -183,5 +296,8 @@ public final class DefaultAgentLoop implements AgentLoop {
         if (sink != null) {
             sink.emit(event);
         }
+    }
+
+    private record LoadedSkillToolResult(String messageId, String toolUseId, String skillName, int originalChars) {
     }
 }

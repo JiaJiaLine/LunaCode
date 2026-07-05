@@ -1,5 +1,7 @@
 package com.lunacode.app;
 
+import com.lunacode.command.BuiltinSlashCommands;
+import com.lunacode.command.SlashCommandRegistry;
 import com.lunacode.config.ConfigLoader;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.conversation.DefaultConversationManager;
@@ -16,6 +18,7 @@ import com.lunacode.memory.ProviderMemoryModelClient;
 import com.lunacode.orchestrator.DefaultChatOrchestrator;
 import com.lunacode.permission.DefaultPathSandbox;
 import com.lunacode.permission.PathSandbox;
+import com.lunacode.permission.SandboxRoot;
 import com.lunacode.prompt.EnvironmentContextCollector;
 import com.lunacode.prompt.MessageChannelBuilder;
 import com.lunacode.prompt.PromptContextBuilder;
@@ -27,6 +30,14 @@ import com.lunacode.session.JsonlSessionStore;
 import com.lunacode.session.SessionBackedConversationManager;
 import com.lunacode.session.SessionCommandHandler;
 import com.lunacode.session.SessionRecoveryResult;
+import com.lunacode.skill.BuiltinSkillSource;
+import com.lunacode.skill.DefaultSkillCatalog;
+import com.lunacode.skill.DefaultSkillInvocationPlanner;
+import com.lunacode.skill.DefaultSkillPromptContextLoader;
+import com.lunacode.skill.FileSystemSkillSource;
+import com.lunacode.skill.FrontmatterSkillParser;
+import com.lunacode.skill.SkillCatalog;
+import com.lunacode.skill.SkillDiagnostic;
 import com.lunacode.tool.AskUserQuestionTool;
 import com.lunacode.tool.BashTool;
 import com.lunacode.tool.BubblewrapCommandSandbox;
@@ -37,6 +48,7 @@ import com.lunacode.tool.DirectCommandSandbox;
 import com.lunacode.tool.EditFileTool;
 import com.lunacode.tool.GlobTool;
 import com.lunacode.tool.GrepTool;
+import com.lunacode.tool.LoadSkillTool;
 import com.lunacode.tool.McpToolWrapper;
 import com.lunacode.tool.ReadFileTool;
 import com.lunacode.tool.SensitiveValueMasker;
@@ -49,7 +61,10 @@ import com.lunacode.tui.LanternaLunaTui;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -66,6 +81,7 @@ public class LunaCodeApplication {
         }
 
         Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
+        Path userHome = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
         JsonlSessionStore sessionStore = new JsonlSessionStore(workspaceRoot);
         DefaultSessionService sessionService = new DefaultSessionService(sessionStore, config.context());
         SessionBackedConversationManager conversationManager = new SessionBackedConversationManager(new DefaultConversationManager(), sessionService);
@@ -85,8 +101,10 @@ public class LunaCodeApplication {
         }
 
         PathSandbox pathSandbox;
+        List<SandboxRoot> sandboxRoots;
         try {
-            pathSandbox = new DefaultPathSandbox(workspaceRoot, config.sandbox());
+            sandboxRoots = buildSandboxRoots(workspaceRoot, userHome, config.sandbox());
+            pathSandbox = new DefaultPathSandbox(workspaceRoot, sandboxRoots);
         } catch (IllegalArgumentException e) {
             System.err.println("沙箱配置无效: " + e.getMessage());
             return;
@@ -101,6 +119,21 @@ public class LunaCodeApplication {
         registry.register(new GrepTool(resolver));
         registry.register(new AskUserQuestionTool());
         registry.register(new ToolSearchTool(registry));
+
+        SlashCommandRegistry builtinCommandProbe = new SlashCommandRegistry();
+        BuiltinSlashCommands.registerAll(builtinCommandProbe);
+        SkillCatalog skillCatalog = new DefaultSkillCatalog(
+                List.of(new BuiltinSkillSource(), FileSystemSkillSource.user(), FileSystemSkillSource.project()),
+                new FrontmatterSkillParser(),
+                workspaceRoot,
+                userHome,
+                builtinCommandProbe::builtinCommandNames,
+                () -> registry.getEnabledTools().stream()
+                        .map(Tool::name)
+                        .collect(Collectors.toCollection(LinkedHashSet::new))
+        );
+        DefaultSkillInvocationPlanner skillPlanner = new DefaultSkillInvocationPlanner(skillCatalog);
+        registry.register(new LoadSkillTool(skillPlanner));
 
         SensitiveValueMasker masker = new SensitiveValueMasker();
         masker.add(config.apiKey());
@@ -127,7 +160,7 @@ public class LunaCodeApplication {
                 questionBroker,
                 commandSandbox,
                 config.sandbox(),
-                pathSandbox.roots()
+                sandboxRoots
         );
         DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);
 
@@ -150,7 +183,8 @@ public class LunaCodeApplication {
                 new EnvironmentContextCollector(),
                 new MessageChannelBuilder(),
                 new DefaultProjectInstructionLoader(),
-                memoryContextLoader
+                memoryContextLoader,
+                new DefaultSkillPromptContextLoader(skillCatalog)
         );
 
         DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(
@@ -169,6 +203,9 @@ public class LunaCodeApplication {
                 promptContextBuilder,
                 requestRender
         );
+        orchestrator.configureSkills(skillCatalog, skillPlanner, null);
+        printSkillDiagnostics(skillCatalog);
+
         LanternaLunaTui tui = new LanternaLunaTui(conversationManager, orchestrator);
         orchestrator.setCommandUiController(tui);
         tuiRef.set(tui);
@@ -179,6 +216,14 @@ public class LunaCodeApplication {
         }
     }
 
+    private void printSkillDiagnostics(SkillCatalog skillCatalog) {
+        if (skillCatalog == null) {
+            return;
+        }
+        for (SkillDiagnostic diagnostic : skillCatalog.diagnostics()) {
+            System.err.println("Skill " + diagnostic.level() + " [" + diagnostic.sourceId() + "]: " + diagnostic.message());
+        }
+    }
     private Set<String> reservedToolNames(DefaultToolRegistry registry) {
         return registry.getEnabledTools().stream()
                 .map(Tool::name)
@@ -187,5 +232,14 @@ public class LunaCodeApplication {
 
     private boolean isLinux() {
         return System.getProperty("os.name", "").toLowerCase().contains("linux");
+    }
+
+    static List<SandboxRoot> buildSandboxRoots(Path workspaceRoot, Path userHome, com.lunacode.config.SandboxConfig config) {
+        List<SandboxRoot> roots = new ArrayList<>(SandboxRoot.build(workspaceRoot, config));
+        Path userSkillRoot = userHome == null ? null : userHome.resolve(".lunacode").resolve("skills");
+        if (userSkillRoot != null && java.nio.file.Files.isDirectory(userSkillRoot)) {
+            roots.add(SandboxRoot.readOnly("user-skills", userSkillRoot, "/roots/user-skills"));
+        }
+        return Collections.unmodifiableList(roots);
     }
 }

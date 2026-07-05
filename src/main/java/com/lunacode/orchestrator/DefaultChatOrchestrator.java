@@ -19,15 +19,18 @@ import com.lunacode.command.SlashCommandCompletion;
 import com.lunacode.command.SlashCommandDispatcher;
 import com.lunacode.command.SlashCommandParser;
 import com.lunacode.command.SlashCommandRegistry;
+import com.lunacode.command.SkillCommandRegistrar;
 import com.lunacode.config.ProviderConfig;
 import com.lunacode.context.CompactTrigger;
 import com.lunacode.context.ContextManager;
 import com.lunacode.context.ContextPreparationRequest;
 import com.lunacode.context.ContextPreparationResult;
 import com.lunacode.context.DefaultContextManager;
+import com.lunacode.conversation.ContentBlock;
 import com.lunacode.conversation.ConversationCompactionAccess;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.ConversationMessageSnapshot;
+import com.lunacode.conversation.MessageRole;
 import com.lunacode.conversation.MessageStatus;
 import com.lunacode.conversation.TokenUsage;
 import com.lunacode.interaction.BlockingPermissionConfirmationBroker;
@@ -55,6 +58,16 @@ import com.lunacode.provider.ChatProvider;
 import com.lunacode.runtime.AgentMode;
 import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.runtime.CancellationToken;
+import com.lunacode.skill.DefaultSkillForkRunner;
+import com.lunacode.skill.LoadedSkillContext;
+import com.lunacode.skill.SkillCatalog;
+import com.lunacode.skill.SkillExecutionMode;
+import com.lunacode.skill.SkillForkResult;
+import com.lunacode.skill.SkillForkRunner;
+import com.lunacode.skill.SkillInvocationPlan;
+import com.lunacode.skill.SkillInvocationPlanner;
+import com.lunacode.skill.SkillInvocationRequest;
+import com.lunacode.skill.SkillPromptContext;
 import com.lunacode.session.SessionCommandHandler;
 import com.lunacode.tool.DefaultToolPermissionGateway;
 import com.lunacode.tool.DefaultToolRegistry;
@@ -68,6 +81,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -79,6 +93,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private final ConversationManager conversationManager;
     private final ChatProvider provider;
     private final ToolRegistry toolRegistry;
+    private final ToolExecutor toolExecutor;
     private final ContextManager contextManager;
     private final PromptContextBuilder promptContextBuilder;
     private final Runnable onChange;
@@ -100,7 +115,12 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private final Supplier<MemoryIndexSnapshot> memoryIndexSupplier;
     private final SlashCommandDispatcher commandDispatcher;
     private final SlashCommandCompleter commandCompleter;
+    private final SlashCommandRegistry commandRegistry;
+    private final SkillCommandRegistrar skillCommandRegistrar = new SkillCommandRegistrar();
     private final Path workspaceRoot;
+    private volatile SkillCatalog skillCatalog;
+    private volatile SkillInvocationPlanner skillInvocationPlanner;
+    private volatile SkillForkRunner skillForkRunner;
     private volatile Path lastPlanFile;
     private volatile int currentTurnStartIndex;
     private volatile CommandUiController commandUiController = () -> {};
@@ -212,6 +232,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.provider = Objects.requireNonNull(provider, "provider");
         this.config = Objects.requireNonNull(config, "config");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
+        this.toolExecutor = toolExecutor;
         this.questionBroker = Objects.requireNonNull(questionBroker, "questionBroker");
         this.sessionCommandHandler = sessionCommandHandler;
         this.memoryCommandHandler = memoryCommandHandler;
@@ -225,6 +246,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.workspaceRoot = Path.of("").toAbsolutePath().normalize();
         this.promptContextBuilder = promptContextBuilder == null ? new PromptContextBuilder() : promptContextBuilder;
         CommandBundle commands = defaultCommandBundle();
+        this.commandRegistry = commands.registry();
         this.commandDispatcher = commands.dispatcher();
         this.commandCompleter = commands.completer();
         this.contextManager = DefaultContextManager.createDefault(workspaceRoot, config.context(), new com.lunacode.tool.SensitiveValueMasker(java.util.List.of(config.apiKey())));
@@ -236,13 +258,13 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.agentLoop = createAgentLoop(this.conversationManager, this.provider, config, this.toolRegistry, toolExecutor);
     }
 
-    private record CommandBundle(SlashCommandDispatcher dispatcher, SlashCommandCompleter completer) {
+    private record CommandBundle(SlashCommandRegistry registry, SlashCommandDispatcher dispatcher, SlashCommandCompleter completer) {
     }
 
     private static CommandBundle defaultCommandBundle() {
         SlashCommandRegistry registry = new SlashCommandRegistry();
         BuiltinSlashCommands.registerAll(registry);
-        return new CommandBundle(new SlashCommandDispatcher(registry, new SlashCommandParser()), new SlashCommandCompleter(registry));
+        return new CommandBundle(registry, new SlashCommandDispatcher(registry, new SlashCommandParser()), new SlashCommandCompleter(registry));
     }
 
     private static ExecutorService newAgentExecutor() {
@@ -268,6 +290,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             return;
         }
         String stripped = content.strip();
+        refreshSkillCommands();
         DispatchResult commandResult = commandDispatcher.dispatch(stripped, this);
         if (commandResult == DispatchResult.HANDLED) {
             return;
@@ -286,15 +309,98 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             answerModeSwitch(stripped);
             return;
         }
+        startAgentRequest(new AgentRequest(stripped, runConfig(agentMode)));
+    }
+
+    @Override
+    public void submitSkillInvocation(SkillInvocationRequest request) {
+        if (request == null || request.name().isBlank()) {
+            setStatus("error", "Skill 名称不能为空");
+            return;
+        }
+        if (permissionBroker.hasPendingConfirmation() || questionBroker.hasPendingQuestion() || pendingModeSwitch.get() != null) {
+            setStatus("warning", "当前正在等待用户输入，完成后再调用 Skill");
+            return;
+        }
+        SkillInvocationPlanner planner = skillInvocationPlanner;
+        if (planner == null) {
+            setStatus("error", "Skill 系统尚未初始化");
+            return;
+        }
+        SkillInvocationPlan plan;
+        try {
+            plan = planner.plan(request);
+        } catch (RuntimeException e) {
+            setStatus("error", "Skill 调用失败: " + e.getMessage());
+            return;
+        }
+        if (plan.definition().mode() == SkillExecutionMode.FORK) {
+            startForkSkill(request, plan);
+        } else {
+            startInlineSkill(request, plan);
+        }
+    }
+
+    public void configureSkills(SkillCatalog catalog, SkillInvocationPlanner planner, SkillForkRunner forkRunner) {
+        this.skillCatalog = catalog;
+        this.skillInvocationPlanner = planner;
+        this.skillForkRunner = forkRunner == null
+                ? new DefaultSkillForkRunner(childConversation -> createAgentLoop(childConversation, provider, config, toolRegistry, toolExecutor))
+                : forkRunner;
+        refreshSkillCommands();
+    }
+
+    private void startInlineSkill(SkillInvocationRequest request, SkillInvocationPlan plan) {
+        startAgentRequest(new AgentRequest(
+                visibleSkillRequest(request),
+                plan.renderedPrompt(),
+                skillRunConfig(plan)
+        ));
+    }
+
+    private void startForkSkill(SkillInvocationRequest request, SkillInvocationPlan plan) {
+        SkillForkRunner runner = skillForkRunner;
+        if (runner == null) {
+            setStatus("error", "fork Skill 运行器尚未初始化");
+            return;
+        }
         if (!responding.compareAndSet(false, true)) {
-            setStatus("warning", "当前忙，请稍后再试");
+            setStatus("warning", "当前正忙，请稍后再试");
+            return;
+        }
+        currentTurnStartIndex = fullSnapshotSize();
+        String visibleRequest = visibleSkillRequest(request);
+        conversationManager.addMessage(MessageRole.USER, visibleRequest);
+        CancellationToken token = new CancellationToken();
+        currentToken.set(token);
+        setStatus("responding", "正在运行 fork Skill /" + plan.definition().name());
+        executor.submit(() -> {
+            try {
+                SkillForkResult result = runner.runFork(plan, skillRunConfig(plan), conversationManager, token);
+                if (!token.isCancellationRequested()) {
+                    conversationManager.addAssistantMessage(List.of(new ContentBlock.Text(formatForkSummary(result, visibleRequest))));
+                    setStatus("idle", null);
+                    triggerAutoMemoryUpdate();
+                }
+            } catch (RuntimeException e) {
+                setStatus("error", "fork Skill 执行失败: " + e.getMessage());
+            } finally {
+                responding.set(false);
+                currentToken.compareAndSet(token, null);
+                onChange.run();
+            }
+        });
+    }
+
+    private void startAgentRequest(AgentRequest request) {
+        if (!responding.compareAndSet(false, true)) {
+            setStatus("warning", "当前正忙，请稍后再试");
             return;
         }
         currentTurnStartIndex = fullSnapshotSize();
         CancellationToken token = new CancellationToken();
         currentToken.set(token);
         setStatus("responding", null);
-        AgentRequest request = new AgentRequest(stripped, runConfig(agentMode));
         executor.submit(() -> {
             try {
                 agentLoop.run(request, this, token);
@@ -305,6 +411,52 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             }
         });
     }
+
+    private AgentRunConfig skillRunConfig(SkillInvocationPlan plan) {
+        LoadedSkillContext loadedSkill = new LoadedSkillContext(
+                plan.definition().name(),
+                plan.renderedPrompt(),
+                plan.definition().resourceRoot()
+        );
+        return runConfig(agentMode)
+                .withToolAccessPolicy(plan.toolAccessPolicy())
+                .withModelOverride(plan.modelOverride())
+                .withSkillPromptContext(new SkillPromptContext(List.of(), Optional.of(loadedSkill)));
+    }
+
+    private String visibleSkillRequest(SkillInvocationRequest request) {
+        String name = request.name().startsWith("/") ? request.name() : "/" + request.name();
+        String args = request.rawArguments() == null ? "" : request.rawArguments().strip();
+        return args.isBlank() ? name : name + " " + args;
+    }
+
+    private String formatForkSummary(SkillForkResult result, String visibleRequest) {
+        StringBuilder out = new StringBuilder();
+        out.append("fork Skill ").append(visibleRequest).append(" 已完成。");
+        if (!result.summary().isBlank()) {
+            out.append("\n\n").append(result.summary().strip());
+        }
+        if (!result.artifactPaths().isEmpty()) {
+            out.append("\n\n产物：").append(String.join(", ", result.artifactPaths()));
+        }
+        if (!result.nextSteps().isEmpty()) {
+            out.append("\n\n后续建议：").append(String.join("；", result.nextSteps()));
+        }
+        return out.toString();
+    }
+
+    private void refreshSkillCommands() {
+        SkillCatalog catalog = skillCatalog;
+        if (catalog == null) {
+            return;
+        }
+        try {
+            skillCommandRegistrar.registerSkillCommands(commandRegistry, catalog, this);
+        } catch (RuntimeException e) {
+            setStatus("warning", "Skill 命令刷新失败: " + e.getMessage());
+        }
+    }
+
     @Override
     public void cancelCurrentRun() {
         CancellationToken token = currentToken.get();
@@ -319,6 +471,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
 
     @Override
     public SlashCommandCompletion completeSlashCommand(String input, int cursorIndex) {
+        refreshSkillCommands();
         return commandCompleter.complete(input, cursorIndex);
     }
 

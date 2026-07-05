@@ -38,6 +38,9 @@ public final class DefaultPathSandbox implements PathSandbox {
             if (root == null) {
                 return Result.deny("路径超出允许目录: " + requestedPath);
             }
+            if (root.readOnly() && intent == PathIntent.WRITE) {
+                return Result.deny("Path is inside a read-only sandbox root: " + requestedPath);
+            }
             return Result.allow(toVirtualPath(root, realCandidate));
         } catch (Exception e) {
             return Result.deny("路径沙箱校验失败: " + requestedPath + " (" + e.getMessage() + ")");

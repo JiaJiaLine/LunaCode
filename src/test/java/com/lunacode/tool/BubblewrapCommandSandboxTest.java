@@ -44,4 +44,22 @@ class BubblewrapCommandSandboxTest {
         BubblewrapCommandSandbox unavailable = new BubblewrapCommandSandbox(true, tempDir.resolve("missing-bwrap"));
         assertTrue(unavailable.wrapShellCommand("echo hi", tempDir, List.of(), SandboxConfig.defaults()).isError());
     }
+
+    @Test
+    void readOnlyRootsUseReadOnlyBind() throws Exception {
+        Path userSkills = tempDir.resolve("user-skills");
+        Files.createDirectories(userSkills);
+        BubblewrapCommandSandbox sandbox = new BubblewrapCommandSandbox(false, Path.of("/usr/bin/bwrap"));
+
+        CommandSandbox.PreparedCommand prepared = sandbox.wrapShellCommand(
+                "cat script.sh",
+                tempDir,
+                List.of(SandboxRoot.project(tempDir), SandboxRoot.readOnly("user-skills", userSkills, "/roots/user-skills")),
+                SandboxConfig.defaults()
+        );
+        String script = String.join(" ", prepared.command());
+
+        assertTrue(script.contains("--ro-bind '" + userSkills.toRealPath() + "' '" + userSkills.toRealPath() + "'"));
+    }
+
 }

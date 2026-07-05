@@ -7,12 +7,42 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public final class SlashCommandRegistry {
     private final List<SlashCommandDefinition> definitions = new ArrayList<>();
     private final Map<String, SlashCommandDefinition> byName = new LinkedHashMap<>();
+    private final List<SlashCommandDefinition> dynamicDefinitions = new ArrayList<>();
 
     public void register(SlashCommandDefinition definition) {
+        registerInternal(definition, false);
+    }
+
+    public void registerDynamic(SlashCommandDefinition definition) {
+        registerInternal(definition, true);
+    }
+
+    public void clearDynamicCommands() {
+        definitions.removeAll(dynamicDefinitions);
+        dynamicDefinitions.clear();
+        rebuildIndex();
+    }
+
+    public Set<String> builtinCommandNames() {
+        return definitions.stream()
+                .filter(definition -> !dynamicDefinitions.contains(definition))
+                .map(SlashCommandDefinition::name)
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    public Set<String> registeredCommandNames() {
+        return definitions.stream()
+                .map(SlashCommandDefinition::name)
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    private void registerInternal(SlashCommandDefinition definition, boolean dynamic) {
         Objects.requireNonNull(definition, "definition");
         validateName(definition.name(), "命令主名称");
         List<String> names = new ArrayList<>();
@@ -33,6 +63,9 @@ public final class SlashCommandRegistry {
         }
 
         definitions.add(definition);
+        if (dynamic) {
+            dynamicDefinitions.add(definition);
+        }
         for (String name : names) {
             byName.put(normalize(name), definition);
         }
@@ -93,5 +126,15 @@ public final class SlashCommandRegistry {
 
     private String normalize(String name) {
         return name.strip().toLowerCase(Locale.ROOT);
+    }
+
+    private void rebuildIndex() {
+        byName.clear();
+        for (SlashCommandDefinition definition : definitions) {
+            byName.put(normalize(definition.name()), definition);
+            for (String alias : definition.aliases()) {
+                byName.put(normalize(alias), definition);
+            }
+        }
     }
 }

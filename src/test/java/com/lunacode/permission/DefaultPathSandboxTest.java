@@ -64,4 +64,20 @@ class DefaultPathSandboxTest {
         assertTrue(sandbox.validate("safe/new.txt", PathIntent.WRITE).allowed());
         assertFalse(sandbox.validate("../outside-new.txt", PathIntent.WRITE).allowed());
     }
+
+    @Test
+    void readOnlyRootsAllowReadsButRejectWrites() throws Exception {
+        Path userSkills = tempDir.resolve("user-skills");
+        Files.createDirectories(userSkills);
+        Files.writeString(userSkills.resolve("SKILL.md"), "body");
+        DefaultPathSandbox sandbox = new DefaultPathSandbox(
+                tempDir,
+                List.of(SandboxRoot.project(tempDir), SandboxRoot.readOnly("user-skills", userSkills, "/roots/user-skills"))
+        );
+
+        assertTrue(sandbox.validate("/roots/user-skills/SKILL.md", PathIntent.READ).allowed());
+        assertTrue(sandbox.validate("/roots/user-skills/SKILL.md", PathIntent.COMMAND_ARGUMENT).allowed());
+        assertFalse(sandbox.validate("/roots/user-skills/SKILL.md", PathIntent.WRITE).allowed());
+    }
+
 }

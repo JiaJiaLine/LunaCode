@@ -14,7 +14,8 @@ import java.util.regex.Pattern;
 public record SandboxRoot(
         String name,
         Path realPath,
-        String virtualPrefix
+        String virtualPrefix,
+        boolean readOnly
 ) {
     private static final Pattern ROOT_NAME = Pattern.compile("[A-Za-z0-9_-]+");
 
@@ -28,6 +29,10 @@ public record SandboxRoot(
             throw new IllegalArgumentException("virtualPrefix 必须以 / 开头");
         }
         virtualPrefix = virtualPrefix.strip();
+    }
+
+    public SandboxRoot(String name, Path realPath, String virtualPrefix) {
+        this(name, realPath, virtualPrefix, false);
     }
 
     public static List<SandboxRoot> build(Path workspaceRoot, SandboxConfig config) {
@@ -53,6 +58,13 @@ public record SandboxRoot(
             throw new IllegalArgumentException("额外沙箱根目录 name 只允许字母、数字、下划线和连字符: " + config.name());
         }
         return new SandboxRoot(config.name(), realPath(Path.of(config.path())), "/roots/" + config.name());
+    }
+
+    public static SandboxRoot readOnly(String name, Path path, String virtualPrefix) {
+        if (!ROOT_NAME.matcher(name).matches()) {
+            throw new IllegalArgumentException("Read-only sandbox root name may only contain letters, digits, underscore and hyphen: " + name);
+        }
+        return new SandboxRoot(name, realPath(path), virtualPrefix, true);
     }
 
     private static Path realPath(Path path) {

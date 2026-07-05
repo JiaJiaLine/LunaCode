@@ -1,8 +1,8 @@
 package com.lunacode.prompt;
 
-import com.lunacode.runtime.AgentRunConfig;
-
 import com.lunacode.conversation.ApiMessage;
+import com.lunacode.runtime.AgentRunConfig;
+import com.lunacode.skill.SkillPromptContext;
 import com.lunacode.tool.DeferredToolSummary;
 
 import java.util.List;
@@ -35,9 +35,22 @@ public final class MessageChannelBuilder {
             Optional<ProjectInstructionContext> projectInstructions,
             Optional<MemoryContext> memory
     ) {
+        return build(config, state, history, deferredTools, projectInstructions, memory, SkillPromptContext.empty());
+    }
+
+    public MessageChannel build(
+            AgentRunConfig config,
+            ModeInjectionState state,
+            List<ApiMessage> history,
+            List<DeferredToolSummary> deferredTools,
+            Optional<ProjectInstructionContext> projectInstructions,
+            Optional<MemoryContext> memory,
+            SkillPromptContext skillContext
+    ) {
         return new MessageChannel(
                 projectInstructions,
                 memory,
+                skillContext,
                 reminderBuilder.build(state, deferredTools),
                 history
         );

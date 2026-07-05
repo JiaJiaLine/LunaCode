@@ -2,6 +2,7 @@ package com.lunacode.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lunacode.permission.PathIntent;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -50,7 +51,7 @@ public class EditFileTool implements Tool {
             return ToolResult.error(validation.message(), Map.of("errorType", "invalid_arguments", "code", validation.code()));
         }
         try {
-            Path path = resolver.resolveInsideWorkspace(text(input, "path", "file_path"));
+            Path path = resolver.resolveInsideWorkspace(text(input, "path", "file_path"), PathIntent.WRITE);
             if (!Files.exists(path)) {
                 return ToolResult.error("文件不存在: " + resolver.relativize(path), Map.of("errorType", "file_not_found", "path", resolver.relativize(path)));
             }
