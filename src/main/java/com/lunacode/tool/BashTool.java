@@ -2,20 +2,15 @@ package com.lunacode.tool;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lunacode.permission.DangerousCommandBlacklist;
+import com.lunacode.hook.HookActionResult;
+import com.lunacode.hook.ShellCommandRunner;
 
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 
 public class BashTool implements Tool {
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private final DangerousCommandBlacklist blacklist = new DangerousCommandBlacklist();
+    private final ShellCommandRunner commandRunner = new ShellCommandRunner();
     private final JsonNode schema;
 
     public BashTool() {
@@ -46,83 +41,11 @@ public class BashTool implements Tool {
     @Override
     public ToolResult execute(ToolExecutionContext context, JsonNode input) {
         String command = input.path("command").asText();
-        Optional<String> blacklistReason = blacklist.firstMatch(command);
-        if (blacklistReason.isPresent()) {
-            return ToolResult.error("命令被安全黑名单拒绝: " + blacklistReason.get(), Map.of(
-                    "errorType", "blacklisted_command",
-                    "permissionLayer", "blacklist"
-            ));
-        }
         Duration timeout = input.has("timeout_seconds")
                 ? Duration.ofSeconds(input.path("timeout_seconds").asLong())
                 : context.commandTimeout();
-        long started = System.nanoTime();
-        Process process = null;
-        try {
-            CommandSandbox.PreparedCommand prepared = context.commandSandbox().wrapShellCommand(
-                    command,
-                    context.workspaceRoot(),
-                    context.sandboxRoots(),
-                    context.sandboxConfig()
-            );
-            if (prepared.isError()) {
-                return ToolResult.error(prepared.error(), Map.of("errorType", "command_sandbox_error"));
-            }
-            process = new ProcessBuilder(prepared.command())
-                    .directory(context.workspaceRoot().toFile())
-                    .redirectInput(ProcessBuilder.Redirect.PIPE)
-                    .start();
-            CompletableFuture<String> stdout = readAsync(process.getInputStream());
-            CompletableFuture<String> stderr = readAsync(process.getErrorStream());
-            boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                process.waitFor(1, TimeUnit.SECONDS);
-                String out = stdout.getNow("");
-                String err = stderr.getNow("");
-                return buildResult(context, true, -1, true, started, out, err);
-            }
-            return buildResult(context, process.exitValue() != 0, process.exitValue(), false, started, stdout.join(), stderr.join());
-        } catch (Exception e) {
-            if (process != null) {
-                process.destroyForcibly();
-            }
-            return ToolResult.error("命令执行失败: " + e.getMessage(), Map.of("errorType", "command_error"));
-        }
-    }
-
-    private CompletableFuture<String> readAsync(InputStream stream) {
-        return CompletableFuture.supplyAsync(() -> {
-            try (InputStream in = stream) {
-                return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-            } catch (Exception e) {
-                return "";
-            }
-        });
-    }
-
-    private ToolResult buildResult(ToolExecutionContext context, boolean error, int exitCode, boolean timedOut, long started, String stdout, String stderr) {
-        String maskedOut = context.masker().mask(stdout);
-        String maskedErr = context.masker().mask(stderr);
-        long durationMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
-        String content = "exitCode=" + exitCode + "\n"
-                + "timedOut=" + timedOut + "\n"
-                + "stdout:\n" + maskedOut + "\n"
-                + "stderr:\n" + maskedErr;
-        String limited = ReadFileTool.limitContent(content, context.maxContentChars());
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("exitCode", exitCode);
-        metadata.put("durationMillis", durationMillis);
-        metadata.put("timedOut", timedOut);
-        metadata.put("stdoutChars", maskedOut.length());
-        metadata.put("stderrChars", maskedErr.length());
-        metadata.put("truncated", limited.length() < content.length());
-        if (timedOut) {
-            metadata.put("errorType", "command_timeout");
-        } else if (exitCode != 0) {
-            metadata.put("errorType", "non_zero_exit");
-        }
-        return new ToolResult(limited, error, metadata);
+        HookActionResult result = commandRunner.run(command, timeout, Map.of(), context);
+        return new ToolResult(result.output(), !result.success(), result.metadata());
     }
 
     @Override

@@ -4,14 +4,19 @@ import com.lunacode.agent.event.AgentEvent;
 import com.lunacode.config.ContextBudget;
 import com.lunacode.config.ContextConfig;
 import com.lunacode.conversation.ConversationCompactionAccess;
-import com.lunacode.conversation.ConversationMessageSnapshot;
 import com.lunacode.conversation.TokenUsage;
+import com.lunacode.hook.HookContext;
+import com.lunacode.hook.HookEventName;
+import com.lunacode.hook.HookExecutionScope;
+import com.lunacode.hook.HookRuntime;
+import com.lunacode.hook.NoOpHookRuntime;
 import com.lunacode.prompt.PromptBundle;
 import com.lunacode.tool.ToolExecutionRecord;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 public final class DefaultContextManager implements ContextManager {
     private final SessionContextStore store;
@@ -22,6 +27,8 @@ public final class DefaultContextManager implements ContextManager {
     private final RecentFileAccessTracker recentFileAccessTracker;
     private final UsedSkillRegistry usedSkillRegistry;
     private final CompactionState state;
+    private final HookRuntime hookRuntime;
+    private final Supplier<String> sessionIdSupplier;
     private volatile TokenEstimate lastEstimate = new TokenEstimate(0, 0, "none");
 
     public DefaultContextManager(
@@ -34,6 +41,21 @@ public final class DefaultContextManager implements ContextManager {
             UsedSkillRegistry usedSkillRegistry,
             CompactionState state
     ) {
+        this(store, estimator, externalizer, historyCompactor, summaryModelClient, recentFileAccessTracker, usedSkillRegistry, state, NoOpHookRuntime.instance(), () -> "");
+    }
+
+    public DefaultContextManager(
+            SessionContextStore store,
+            ContextTokenEstimator estimator,
+            LightweightToolResultExternalizer externalizer,
+            HistoryCompactor historyCompactor,
+            SummaryModelClient summaryModelClient,
+            RecentFileAccessTracker recentFileAccessTracker,
+            UsedSkillRegistry usedSkillRegistry,
+            CompactionState state,
+            HookRuntime hookRuntime,
+            Supplier<String> sessionIdSupplier
+    ) {
         this.store = Objects.requireNonNull(store, "store");
         this.estimator = Objects.requireNonNull(estimator, "estimator");
         this.externalizer = Objects.requireNonNull(externalizer, "externalizer");
@@ -42,9 +64,15 @@ public final class DefaultContextManager implements ContextManager {
         this.recentFileAccessTracker = Objects.requireNonNull(recentFileAccessTracker, "recentFileAccessTracker");
         this.usedSkillRegistry = Objects.requireNonNull(usedSkillRegistry, "usedSkillRegistry");
         this.state = Objects.requireNonNull(state, "state");
+        this.hookRuntime = hookRuntime == null ? NoOpHookRuntime.instance() : hookRuntime;
+        this.sessionIdSupplier = sessionIdSupplier == null ? () -> "" : sessionIdSupplier;
     }
 
     public static DefaultContextManager createDefault(Path workspaceRoot, ContextConfig config, com.lunacode.tool.SensitiveValueMasker masker) {
+        return createDefault(workspaceRoot, config, masker, NoOpHookRuntime.instance(), () -> "");
+    }
+
+    public static DefaultContextManager createDefault(Path workspaceRoot, ContextConfig config, com.lunacode.tool.SensitiveValueMasker masker, HookRuntime hookRuntime, Supplier<String> sessionIdSupplier) {
         return new DefaultContextManager(
                 new ProjectSessionContextStore(workspaceRoot, config.sessionRoot(), masker),
                 new ApproximateContextTokenEstimator(),
@@ -53,7 +81,9 @@ public final class DefaultContextManager implements ContextManager {
                 new ProviderSummaryModelClient(),
                 new RecentFileAccessTracker(),
                 new InMemoryUsedSkillRegistry(),
-                new CompactionState()
+                new CompactionState(),
+                hookRuntime,
+                sessionIdSupplier
         );
     }
 
@@ -86,6 +116,7 @@ public final class DefaultContextManager implements ContextManager {
             if (state.autoCompactionFused()) {
                 String message = "自动上下文压缩已熔断，请输入 /compact 或手动减少上下文。";
                 emit(request, new AgentEvent.CompactionFailed(CompactTrigger.AUTO_CHECK, before.estimatedTokens(), message));
+                emitHook(HookEventName.ERROR, request, message);
                 return new ContextPreparationResult(true, false, CompactTrigger.AUTO_CHECK, before.estimatedTokens(), before.estimatedTokens(), lightweight.externalizedCount(), 0, 0, message);
             }
             return runCompaction(request, conversation, CompactTrigger.AUTO_CHECK, before, lightweight.externalizedCount());
@@ -131,6 +162,7 @@ public final class DefaultContextManager implements ContextManager {
             TokenEstimate before,
             int externalizedCount
     ) {
+        emitHook(HookEventName.COMPACT, request, "compact " + trigger.name().toLowerCase());
         emit(request, new AgentEvent.CompactionStarted(trigger, before.estimatedTokens()));
         CompactionRewrite rewrite = historyCompactor.compact(new HistoryCompactionRequest(
                 conversation.fullSnapshot(),
@@ -150,6 +182,7 @@ public final class DefaultContextManager implements ContextManager {
             }
             String message = failureMessage(trigger, rewrite.failureReason());
             emit(request, new AgentEvent.CompactionFailed(trigger, before.estimatedTokens(), message));
+            emitHook(HookEventName.ERROR, request, message);
             boolean proceed = trigger != CompactTrigger.FORCE;
             return new ContextPreparationResult(proceed, false, trigger, before.estimatedTokens(), before.estimatedTokens(), externalizedCount, 0, 0, message);
         }
@@ -196,5 +229,19 @@ public final class DefaultContextManager implements ContextManager {
         if (request.sink() != null) {
             request.sink().emit(event);
         }
+    }
+
+    private void emitHook(HookEventName event, ContextPreparationRequest request, String message) {
+        hookRuntime.emit(event, new HookContext(event.yamlName(), "", java.util.Map.of(), "", message, event == HookEventName.ERROR ? message : ""), scope(request));
+    }
+
+    private HookExecutionScope scope(ContextPreparationRequest request) {
+        String sessionId;
+        try {
+            sessionId = sessionIdSupplier.get();
+        } catch (RuntimeException e) {
+            sessionId = "";
+        }
+        return new HookExecutionScope(sessionId, request.turnIndex(), request.runConfig().workDir());
     }
 }

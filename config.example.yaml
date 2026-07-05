@@ -1,4 +1,4 @@
-﻿protocol: anthropic
+protocol: anthropic
 model: claude-sonnet-4-20250514
 base_url: https://api.anthropic.com
 api_key: ${ANTHROPIC_API_KEY}
@@ -45,3 +45,31 @@ context:
   prompt_too_long_group_retries: 3
   prompt_too_long_drop_fraction: 0.2
   session_root: .lunacode/tmp/context
+# Hook 配置会从三个位置追加合并：项目级 .lunacode/config.yaml、用户级 ~/.lunacode/config.yaml、本地级 .lunacode/config.local.yaml。
+# 执行顺序固定为项目级 -> 用户级 -> 本地级；同一文件内按声明顺序执行。
+hooks:
+  - event: post_tool_use
+    if: tool == "WriteFile"
+    timeout_ms: 30000
+    action:
+      type: command
+      command: "echo wrote $FILE_PATH"
+
+  - event: pre_tool_use
+    if: tool == "WriteFile" && args.path ~= "package-lock.json"
+    reject: true
+    action:
+      type: command
+      command: "echo 'REJECT: package-lock.json 应该由 npm install 生成，不要手动修改'"
+
+  - event: post_tool_use
+    if: tool == "Bash"
+    inject_result: true
+    action:
+      type: http
+      url: "https://example.com/lunacode-hook"
+      method: POST
+      headers:
+        Content-Type: application/json
+      body: '{"event":"${eventName}","tool":"${toolName}"}'
+      timeout_ms: 3000

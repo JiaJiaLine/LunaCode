@@ -18,6 +18,11 @@ import com.lunacode.conversation.ConversationCompactionAccess;
 import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.MessageRole;
 import com.lunacode.conversation.TokenUsage;
+import com.lunacode.hook.HookContext;
+import com.lunacode.hook.HookEventName;
+import com.lunacode.hook.HookExecutionScope;
+import com.lunacode.hook.HookRuntime;
+import com.lunacode.hook.NoOpHookRuntime;
 import com.lunacode.prompt.PromptBundle;
 import com.lunacode.prompt.PromptContextBuilder;
 import com.lunacode.runtime.AgentRunConfig;
@@ -30,6 +35,7 @@ import com.lunacode.tool.ToolRegistry;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 public final class DefaultAgentLoop implements AgentLoop {
     private final ConversationManager conversationManager;
@@ -40,6 +46,8 @@ public final class DefaultAgentLoop implements AgentLoop {
     private final LoopDecisionMaker decisionMaker;
     private final PromptContextBuilder promptContextBuilder;
     private final ContextManager contextManager;
+    private final HookRuntime hookRuntime;
+    private final Supplier<String> sessionIdSupplier;
 
     public DefaultAgentLoop(
             ConversationManager conversationManager,
@@ -63,6 +71,21 @@ public final class DefaultAgentLoop implements AgentLoop {
             PromptContextBuilder promptContextBuilder,
             ContextManager contextManager
     ) {
+        this(conversationManager, providerConfig, toolRegistry, toolRunner, turnRunner, decisionMaker, promptContextBuilder, contextManager, NoOpHookRuntime.instance(), () -> "");
+    }
+
+    public DefaultAgentLoop(
+            ConversationManager conversationManager,
+            ProviderConfig providerConfig,
+            ToolRegistry toolRegistry,
+            AgentToolRunner toolRunner,
+            AgentTurnRunner turnRunner,
+            LoopDecisionMaker decisionMaker,
+            PromptContextBuilder promptContextBuilder,
+            ContextManager contextManager,
+            HookRuntime hookRuntime,
+            Supplier<String> sessionIdSupplier
+    ) {
         this.conversationManager = Objects.requireNonNull(conversationManager, "conversationManager");
         this.providerConfig = Objects.requireNonNull(providerConfig, "providerConfig");
         this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry");
@@ -71,6 +94,8 @@ public final class DefaultAgentLoop implements AgentLoop {
         this.decisionMaker = Objects.requireNonNull(decisionMaker, "decisionMaker");
         this.promptContextBuilder = Objects.requireNonNull(promptContextBuilder, "promptContextBuilder");
         this.contextManager = contextManager == null ? ContextManager.noop() : contextManager;
+        this.hookRuntime = hookRuntime == null ? NoOpHookRuntime.instance() : hookRuntime;
+        this.sessionIdSupplier = sessionIdSupplier == null ? () -> "" : sessionIdSupplier;
     }
 
     @Override
@@ -88,12 +113,15 @@ public final class DefaultAgentLoop implements AgentLoop {
         while (true) {
             if (token.isCancellationRequested()) {
                 cleanupLoadedSkillResults(loadedSkillToolResults);
+                emitHook(HookEventName.ERROR, new HookContext(HookEventName.ERROR.yamlName(), "", java.util.Map.of(), "", "", "用户已取消当前请求"), scope(config, turns));
                 emit(sink, new AgentEvent.ErrorOccurred("用户已取消当前请求", null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
 
             int turnIndex = turns + 1;
+            HookExecutionScope scope = scope(config, turnIndex);
+            emitHook(HookEventName.TURN_START, messageContext(HookEventName.TURN_START, request.userMessage(), ""), scope);
             ContextPreparationResult contextResult = contextManager.prepareBeforeTurn(new ContextPreparationRequest(
                     effectiveProviderConfig,
                     config,
@@ -107,12 +135,14 @@ public final class DefaultAgentLoop implements AgentLoop {
             ));
             if (!contextResult.proceed()) {
                 cleanupLoadedSkillResults(loadedSkillToolResults);
+                emitHook(HookEventName.ERROR, messageContext(HookEventName.ERROR, contextResult.userVisibleMessage(), contextResult.userVisibleMessage()), scope);
                 emit(sink, new AgentEvent.ErrorOccurred(contextResult.userVisibleMessage(), null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
 
             ToolDeclarationSet declarations = toolRegistry.declarationsForModel(config.mode(), config.toolAccessPolicy());
+            emitHook(HookEventName.PRE_SEND, messageContext(HookEventName.PRE_SEND, request.modelMessage(), ""), scope);
             PromptBundle promptBundle = promptContextBuilder.build(
                     config,
                     turnIndex,
@@ -133,6 +163,11 @@ public final class DefaultAgentLoop implements AgentLoop {
             turns = turnIndex;
             cumulativeUsage = cumulativeUsage.merge(turnResult.usage());
             contextManager.recordProviderUsage(cumulativeUsage);
+            emitHook(HookEventName.POST_RECEIVE, messageContext(HookEventName.POST_RECEIVE, turnResult.fullText(), turnResult.errorSummary()), scope);
+            if (turnResult.errorSummary() != null && !turnResult.errorSummary().isBlank()) {
+                emitHook(HookEventName.ERROR, messageContext(HookEventName.ERROR, turnResult.fullText(), turnResult.errorSummary()), scope);
+            }
+            emitHook(HookEventName.TURN_END, messageContext(HookEventName.TURN_END, turnResult.fullText(), turnResult.errorSummary()), scope);
 
             LoopContext context = new LoopContext(config, token, turnIndex, consecutiveUnknownTools, cumulativeUsage);
             LoopDecision decision = decisionMaker.decide(context, turnResult);
@@ -143,31 +178,37 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
             if (decision instanceof LoopDecision.StopCancelled) {
                 cleanupLoadedSkillResults(loadedSkillToolResults);
+                emitHook(HookEventName.ERROR, messageContext(HookEventName.ERROR, "", "用户已取消当前请求"), scope);
                 emit(sink, new AgentEvent.ErrorOccurred("用户已取消当前请求", null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
             if (decision instanceof LoopDecision.StopError stopError) {
                 cleanupLoadedSkillResults(loadedSkillToolResults);
+                emitHook(HookEventName.ERROR, messageContext(HookEventName.ERROR, "", stopError.summary()), scope);
                 emit(sink, new AgentEvent.ErrorOccurred(stopError.summary(), null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
             if (decision instanceof LoopDecision.StopWithLimit stopWithLimit) {
+                String message = "已达到 Agent Loop 最大迭代次数: " + stopWithLimit.maxIterations();
                 cleanupLoadedSkillResults(loadedSkillToolResults);
-                emit(sink, new AgentEvent.ErrorOccurred("已达到 Agent Loop 最大迭代次数: " + stopWithLimit.maxIterations(), null));
+                emitHook(HookEventName.ERROR, messageContext(HookEventName.ERROR, "", message), scope);
+                emit(sink, new AgentEvent.ErrorOccurred(message, null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
             if (decision instanceof LoopDecision.StopUnknownTools stopUnknownTools) {
+                String message = "连续未知工具达到阈值，已停止: " + stopUnknownTools.count();
                 cleanupLoadedSkillResults(loadedSkillToolResults);
-                emit(sink, new AgentEvent.ErrorOccurred("连续未知工具达到阈值，已停止: " + stopUnknownTools.count(), null));
+                emitHook(HookEventName.ERROR, messageContext(HookEventName.ERROR, "", message), scope);
+                emit(sink, new AgentEvent.ErrorOccurred(message, null));
                 emit(sink, new AgentEvent.LoopComplete(turns));
                 return;
             }
 
             if (decision instanceof LoopDecision.ContinueWithTools continueWithTools) {
-                List<ToolExecutionRecord> records = toolRunner.executeToolBatches(continueWithTools.toolUses(), config, token, sink);
+                List<ToolExecutionRecord> records = toolRunner.executeToolBatches(continueWithTools.toolUses(), config, token, sink, turnIndex);
                 if (records.isEmpty() && token.isCancellationRequested()) {
                     continue;
                 }
@@ -290,6 +331,24 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
         }
         return count;
+    }
+
+    private HookExecutionScope scope(AgentRunConfig config, int turnIndex) {
+        String sessionId;
+        try {
+            sessionId = sessionIdSupplier.get();
+        } catch (RuntimeException e) {
+            sessionId = "";
+        }
+        return new HookExecutionScope(sessionId, turnIndex, config.workDir());
+    }
+
+    private HookContext messageContext(HookEventName event, String message, String error) {
+        return new HookContext(event.yamlName(), "", java.util.Map.of(), "", message, error);
+    }
+
+    private void emitHook(HookEventName event, HookContext context, HookExecutionScope scope) {
+        hookRuntime.emit(event, context, scope);
     }
 
     private void emit(AgentEventSink sink, AgentEvent event) {

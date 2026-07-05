@@ -109,7 +109,7 @@ public class ReadFileTool implements Tool {
         return null;
     }
 
-    static String limitContent(String content, int maxChars) {
+    public static String limitContent(String content, int maxChars) {
         if (content == null || content.length() <= maxChars) {
             return content == null ? "" : content;
         }
