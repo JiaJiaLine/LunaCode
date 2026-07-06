@@ -1,6 +1,9 @@
 package com.lunacode.orchestrator;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.lunacode.background.BackgroundTaskManager;
+import com.lunacode.background.ForegroundSubAgentTracker;
+import com.lunacode.background.TaskNotificationFormatter;
 import com.lunacode.agent.AgentLoop;
 import com.lunacode.agent.AgentRequest;
 import com.lunacode.agent.DefaultAgentLoop;
@@ -130,6 +133,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private volatile AgentMode agentMode = AgentMode.DEFAULT;
     private volatile PermissionMode permissionModeBeforePlan;
     private volatile boolean planPermissionManuallyChanged;
+    private volatile ForegroundSubAgentTracker foregroundSubAgentTracker;
 
     public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, Runnable onChange) {
         this(conversationManager, provider, config, new DefaultToolRegistry(), null, onChange, newAgentExecutor());
@@ -538,6 +542,31 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         }
     }
 
+    public void configureBackgroundTasks(BackgroundTaskManager manager, ForegroundSubAgentTracker tracker, TaskNotificationFormatter formatter) {
+        this.foregroundSubAgentTracker = tracker;
+        TaskNotificationFormatter safeFormatter = formatter == null ? new TaskNotificationFormatter() : formatter;
+        if (manager != null) {
+            manager.addListener(taskId -> manager.get(taskId).ifPresent(snapshot -> {
+                conversationManager.addAssistantMessage(List.of(new ContentBlock.Text(safeFormatter.format(snapshot))));
+                setStatus("idle", "后台任务已完成: " + taskId);
+                triggerAutoMemoryUpdate();
+                onChange.run();
+            }));
+        }
+    }
+
+    @Override
+    public void backgroundCurrentSubAgentOrCancel() {
+        ForegroundSubAgentTracker tracker = foregroundSubAgentTracker;
+        if (tracker != null) {
+            Optional<String> taskId = tracker.adoptCurrentToBackground();
+            if (taskId.isPresent()) {
+                setStatus("idle", "子 Agent 已切入后台: " + taskId.get());
+                return;
+            }
+        }
+        cancelCurrentRun();
+    }
     @Override
     public void cancelCurrentRun() {
         CancellationToken token = currentToken.get();

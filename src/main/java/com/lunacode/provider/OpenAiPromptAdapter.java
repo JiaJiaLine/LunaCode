@@ -29,6 +29,8 @@ public final class OpenAiPromptAdapter implements ProviderPromptAdapter {
         if (!skillContext.isBlank()) {
             addMessage(messageArray, "developer", skillContext);
         }
+        promptBundle.messages().subAgentSystemPrompt()
+                .ifPresent(prompt -> addMessage(messageArray, "developer", "## SubAgent Role\n" + prompt));
         promptBundle.messages().projectInstructions()
                 .filter(context -> !context.isEmpty())
                 .ifPresent(context -> addMessage(messageArray, "developer", context.render()));

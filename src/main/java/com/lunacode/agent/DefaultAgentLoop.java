@@ -28,6 +28,7 @@ import com.lunacode.prompt.PromptContextBuilder;
 import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.runtime.CancellationToken;
 import com.lunacode.skill.DefaultSkillInvocationPlanner;
+import com.lunacode.subagent.SubAgentParentContext;
 import com.lunacode.tool.ToolDeclarationSet;
 import com.lunacode.tool.ToolExecutionRecord;
 import com.lunacode.tool.ToolRegistry;
@@ -208,7 +209,7 @@ public final class DefaultAgentLoop implements AgentLoop {
             }
 
             if (decision instanceof LoopDecision.ContinueWithTools continueWithTools) {
-                List<ToolExecutionRecord> records = toolRunner.executeToolBatches(continueWithTools.toolUses(), config, token, sink, turnIndex);
+                List<ToolExecutionRecord> records = toolRunner.executeToolBatches(continueWithTools.toolUses(), config, token, sink, turnIndex, parentContext(config));
                 if (records.isEmpty() && token.isCancellationRequested()) {
                     continue;
                 }
@@ -222,6 +223,27 @@ public final class DefaultAgentLoop implements AgentLoop {
                 rememberLoadedSkillResults(toolResultMessageId, records, loadedSkillToolResults);
                 consecutiveUnknownTools = updateUnknownToolCount(consecutiveUnknownTools, records);
             }
+        }
+    }
+
+    private SubAgentParentContext parentContext(AgentRunConfig config) {
+        return new SubAgentParentContext(
+                conversationManager,
+                config,
+                config == null ? null : config.toolAccessPolicy(),
+                config != null && config.backgroundAgent(),
+                config != null && config.forkAgent(),
+                safeSessionId(),
+                config == null ? java.nio.file.Path.of("") : config.workDir()
+        );
+    }
+
+    private String safeSessionId() {
+        try {
+            String sessionId = sessionIdSupplier.get();
+            return sessionId == null ? "" : sessionId;
+        } catch (RuntimeException e) {
+            return "";
         }
     }
 

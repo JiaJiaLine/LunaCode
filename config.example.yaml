@@ -5,13 +5,24 @@ api_key: ${ANTHROPIC_API_KEY}
 thinking:
   enabled: true
   budget_tokens: 4096
+
+enableVerificationAgent: false
+
+# Agent 运行配置。Fork 子 Agent 会强制后台运行；前台定义式子 Agent 超过该阈值会自动切到后台。
+agent:
+  auto_background_ms: 120000
+  model_aliases:
+    sonnet: claude-sonnet-4-20250514
+    opus: claude-opus-4-20250514
+    haiku: claude-3-5-haiku-20241022
 permissions:
   mode: default
 sandbox:
-  network_enabled: false
+  network_enabled: true
   extra_roots:
     - name: shared-cache
       path: /tmp/lunacode-cache
+
 
 # MCP 配置支持两层合并：先读取用户级 ~/.lunacode/config.yaml，再读取当前项目配置。
 # 同名 server 由项目级完整覆盖用户级；不同名 server 会并集合并。

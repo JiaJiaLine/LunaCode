@@ -101,7 +101,6 @@ class ConfigLoaderTest {
         assertTrue(error.getMessage().contains("OPENAI_API_KEY"));
     }
 
-
     @Test
     void loadsPermissionAndSandboxConfig() throws Exception {
         Path config = writeConfig("""
@@ -124,6 +123,31 @@ class ConfigLoaderTest {
         assertTrue(loaded.sandbox().networkEnabled());
         assertEquals("cache", loaded.sandbox().extraRoots().get(0).name());
         assertEquals("/tmp/lunacode-cache", loaded.sandbox().extraRoots().get(0).path());
+    }
+
+    @Test
+    void loadsAgentSubagentConfig() throws Exception {
+        Path config = writeConfig("""
+                protocol: openai
+                model: gpt-test
+                base_url: https://api.openai.com
+                api_key: key-test
+                enableVerificationAgent: true
+                agent:
+                  auto_background_ms: 90000
+                  model_aliases:
+                    sonnet: claude-sonnet-test
+                    opus: claude-opus-test
+                    haiku: claude-haiku-test
+                """);
+
+        ProviderConfig loaded = new ConfigLoader().load(config);
+
+        assertEquals(90_000L, loaded.agent().getAutoBackgroundMs());
+        assertTrue(loaded.agent().enableVerificationAgent());
+        assertEquals("claude-sonnet-test", loaded.agent().modelAliases().get("sonnet"));
+        assertEquals("claude-opus-test", loaded.agent().modelAliases().get("opus"));
+        assertEquals("claude-haiku-test", loaded.agent().modelAliases().get("haiku"));
     }
 
     @Test
@@ -154,6 +178,7 @@ class ConfigLoaderTest {
         assertEquals(3, loaded.context().restoredFileLimit());
         assertEquals(2_222, loaded.context().restoredFileTokenLimit());
     }
+
     @Test
     void loadsMemoryConfigOverride() throws Exception {
         Path config = writeConfig("""
@@ -169,6 +194,7 @@ class ConfigLoaderTest {
 
         assertFalse(loaded.memory().autoUpdate());
     }
+
     private Path writeConfig(String content) throws Exception {
         Path config = tempDir.resolve("config.yaml");
         Files.writeString(config, content);

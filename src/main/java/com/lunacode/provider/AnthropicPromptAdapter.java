@@ -67,6 +67,11 @@ public final class AnthropicPromptAdapter implements ProviderPromptAdapter {
             skillBlock.put("type", "text");
             skillBlock.put("text", skillContext);
         }
+        promptBundle.messages().subAgentSystemPrompt().ifPresent(prompt -> {
+            ObjectNode subAgentBlock = system.addObject();
+            subAgentBlock.put("type", "text");
+            subAgentBlock.put("text", "## SubAgent Role\n" + prompt);
+        });
         promptBundle.messages().projectInstructions().filter(instructions -> !instructions.isEmpty()).ifPresent(instructions -> {
             ObjectNode block = system.addObject();
             block.put("type", "text");
