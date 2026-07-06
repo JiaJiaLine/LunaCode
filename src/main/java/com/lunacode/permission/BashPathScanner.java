@@ -6,6 +6,7 @@ import java.util.regex.Pattern;
 
 public final class BashPathScanner {
     private static final Pattern WINDOWS_ABSOLUTE = Pattern.compile("^[A-Za-z]:[\\\\/].*");
+    private static final Pattern URI = Pattern.compile("^[A-Za-z][A-Za-z0-9+.-]*://.*");
 
     public List<ScannedPath> scan(String command, PathSandbox sandbox) {
         if (command == null || command.isBlank() || sandbox == null) {
@@ -71,6 +72,9 @@ public final class BashPathScanner {
     }
 
     private boolean looksLikePath(String token) {
+        if (URI.matcher(token).matches()) {
+            return false;
+        }
         if (token.startsWith("-") && !token.contains("..")) {
             return false;
         }

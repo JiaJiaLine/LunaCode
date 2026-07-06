@@ -48,6 +48,42 @@ class DefaultPermissionEngineTest {
     }
 
     @Test
+    void networkIsolationDeniesDirectAndScriptNetworkAccess() throws Exception {
+        DefaultPermissionEngine engine = engine(LoadedPermissionRules.empty());
+
+        PermissionEvaluation directUrl = engine.evaluate(request(
+                "Bash",
+                mapper.createObjectNode().put("command", "curl https://example.com/install.ps1"),
+                PermissionMode.BYPASS_PERMISSIONS
+        ));
+        assertEquals(PermissionEvaluation.Decision.DENY, directUrl.decision());
+        assertEquals(PermissionDecisionLayer.NETWORK, directUrl.layer());
+
+        Files.writeString(tempDir.resolve("fetch_skill.ps1"), "Invoke-WebRequest https://example.com/skill.md -OutFile skill.md");
+        PermissionEvaluation scriptUrl = engine.evaluate(request(
+                "Bash",
+                mapper.createObjectNode().put("command", "powershell -ExecutionPolicy Bypass -File fetch_skill.ps1"),
+                PermissionMode.BYPASS_PERMISSIONS
+        ));
+        assertEquals(PermissionEvaluation.Decision.DENY, scriptUrl.decision());
+        assertEquals(PermissionDecisionLayer.NETWORK, scriptUrl.layer());
+    }
+
+    @Test
+    void networkEnabledLetsUrlReachPermissionModeInsteadOfPathSandbox() {
+        DefaultPermissionEngine engine = engine(LoadedPermissionRules.empty(), new SandboxConfig(true, List.of()));
+
+        PermissionEvaluation evaluation = engine.evaluate(request(
+                "Bash",
+                mapper.createObjectNode().put("command", "curl https://example.com/install.ps1"),
+                PermissionMode.DEFAULT
+        ));
+
+        assertEquals(PermissionEvaluation.Decision.ASK, evaluation.decision());
+        assertEquals(PermissionDecisionLayer.MODE_POLICY, evaluation.layer());
+    }
+
+    @Test
     void denyRulesCannotBeFlippedAndSensitivePathsAskByDefault() throws Exception {
         Files.createDirectories(tempDir.resolve(".lunacode"));
         Files.writeString(tempDir.resolve(".lunacode/config.yaml"), "secret: true");
@@ -78,12 +114,30 @@ class DefaultPermissionEngineTest {
         assertEquals(PermissionEvaluation.Decision.ALLOW, engine.evaluate(request("WriteFile", mapper.createObjectNode().put("path", "a.txt"), PermissionMode.ACCEPT_EDITS)).decision());
     }
 
+    @Test
+    void bashAlwaysSuggestionUsesReusablePrefixForCompoundCommands() {
+        DefaultPermissionEngine engine = engine(LoadedPermissionRules.empty());
+
+        PermissionEvaluation evaluation = engine.evaluate(request(
+                "Bash",
+                mapper.createObjectNode().put("command", "mkdir SkillTest 2>nul && echo DONE"),
+                PermissionMode.DEFAULT
+        ));
+
+        assertEquals(PermissionEvaluation.Decision.ASK, evaluation.decision());
+        assertEquals("Bash(mkdir SkillTest*)", evaluation.suggestedAllowRule());
+    }
+
     private DefaultPermissionEngine engine(LoadedPermissionRules rules) {
-        DefaultPathSandbox sandbox = new DefaultPathSandbox(tempDir, SandboxConfig.defaults());
+        return engine(rules, SandboxConfig.defaults());
+    }
+
+    private DefaultPermissionEngine engine(LoadedPermissionRules rules, SandboxConfig sandboxConfig) {
+        DefaultPathSandbox sandbox = new DefaultPathSandbox(tempDir, sandboxConfig);
         SensitivePathPolicy sensitive = new SensitivePathPolicy();
         return new DefaultPermissionEngine(
                 new InMemoryRuleStore(rules),
-                new PermissionTargetExtractor(sandbox, new BashPathScanner(), sensitive),
+                new PermissionTargetExtractor(sandbox, new BashPathScanner(), sensitive, sandboxConfig),
                 new PermissionRuleMatcher(),
                 new PermissionModePolicy(),
                 new DangerousCommandBlacklist()

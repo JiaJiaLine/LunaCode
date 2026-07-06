@@ -4,12 +4,14 @@ import com.lunacode.permission.PermissionMode;
 import com.lunacode.runtime.AgentMode;
 import com.lunacode.skill.SkillCatalog;
 import com.lunacode.skill.SkillCatalogSnapshot;
+import com.lunacode.skill.SkillContextPolicy;
+import com.lunacode.skill.SkillDefinition;
 import com.lunacode.skill.SkillDiagnostic;
 import com.lunacode.skill.SkillExecutionMode;
 import com.lunacode.skill.SkillInvocationRequest;
 import com.lunacode.skill.SkillOrigin;
-import com.lunacode.skill.SkillSummary;
 import com.lunacode.skill.SkillSourceKind;
+import com.lunacode.skill.SkillSummary;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -41,6 +43,40 @@ class SkillCommandRegistrarTest {
     }
 
     @Test
+    void registersGenericSkillCommandForListAndDispatch() {
+        SlashCommandRegistry registry = new SlashCommandRegistry();
+        BuiltinSlashCommands.registerAll(registry);
+        RecordingRuntime runtime = new RecordingRuntime();
+        new SkillCommandRegistrar().registerSkillCommands(registry, catalog(
+                summary("commit", "commit helper"),
+                summary("test", "test helper")
+        ), runtime);
+
+        assertTrue(registry.visibleNames().stream().anyMatch(name -> name.value().equals("/skill")));
+        assertTrue(registry.visibleNames().stream().anyMatch(name -> name.value().equals("/skills")));
+
+        new SlashCommandDispatcher(registry, new SlashCommandParser()).dispatch("/skill", runtime);
+        assertTrue(runtime.lastInfo.contains("commit"));
+        assertTrue(runtime.lastInfo.contains("/skill <name> [arguments]"));
+
+        new SlashCommandDispatcher(registry, new SlashCommandParser()).dispatch("/skill commit 重点关注安全", runtime);
+        assertEquals("commit", runtime.lastRequest.orElseThrow().name());
+        assertEquals("重点关注安全", runtime.lastRequest.orElseThrow().rawArguments());
+    }
+
+    @Test
+    void genericSkillCommandReportsUnknownSkill() {
+        SlashCommandRegistry registry = new SlashCommandRegistry();
+        BuiltinSlashCommands.registerAll(registry);
+        RecordingRuntime runtime = new RecordingRuntime();
+        new SkillCommandRegistrar().registerSkillCommands(registry, catalog(summary("commit", "commit helper")), runtime);
+
+        new SlashCommandDispatcher(registry, new SlashCommandParser()).dispatch("/skill missing", runtime);
+
+        assertTrue(runtime.lastError.contains("未知 Skill"));
+    }
+
+    @Test
     void keepsBuiltinReviewCommand() {
         SlashCommandRegistry registry = new SlashCommandRegistry();
         BuiltinSlashCommands.registerAll(registry);
@@ -66,8 +102,21 @@ class SkillCommandRegistrarTest {
             }
 
             @Override
-            public Optional<com.lunacode.skill.SkillDefinition> loadForExecution(String name) {
-                return Optional.empty();
+            public Optional<SkillDefinition> loadForExecution(String name) {
+                return List.of(summaries).stream()
+                        .filter(summary -> summary.name().equals(name))
+                        .findFirst()
+                        .map(summary -> new SkillDefinition(
+                                summary.name(),
+                                summary.description(),
+                                summary.mode(),
+                                SkillContextPolicy.FULL,
+                                Optional.empty(),
+                                List.of(),
+                                "body $ARGUMENTS",
+                                summary.origin(),
+                                Optional.empty()
+                        ));
             }
 
             @Override
@@ -79,6 +128,8 @@ class SkillCommandRegistrarTest {
 
     private static final class RecordingRuntime implements CommandRuntime {
         private Optional<SkillInvocationRequest> lastRequest = Optional.empty();
+        private String lastInfo = "";
+        private String lastError = "";
 
         @Override
         public boolean isBusy() {
@@ -107,6 +158,7 @@ class SkillCommandRegistrarTest {
 
         @Override
         public void showInfo(String message) {
+            lastInfo = message == null ? "" : message;
         }
 
         @Override
@@ -115,6 +167,7 @@ class SkillCommandRegistrarTest {
 
         @Override
         public void showError(String message) {
+            lastError = message == null ? "" : message;
         }
 
         @Override

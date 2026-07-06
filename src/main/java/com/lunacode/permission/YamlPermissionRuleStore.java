@@ -46,9 +46,12 @@ public final class YamlPermissionRuleStore implements PermissionRuleStore {
         try {
             if (Files.exists(local)) {
                 List<String> warnings = new ArrayList<>();
-                loadLayer(local, PermissionRuleLevel.LOCAL, warnings);
+                List<PermissionRule> existing = loadLayer(local, PermissionRuleLevel.LOCAL, warnings);
                 if (!warnings.isEmpty()) {
                     return AppendResult.failure("本地权限规则文件损坏，请先修复: " + local);
+                }
+                if (existing.stream().anyMatch(item -> item.effect() == PermissionEffect.ALLOW && item.rawRule().equals(rule))) {
+                    return AppendResult.ok();
                 }
             } else {
                 Files.createDirectories(local.getParent());

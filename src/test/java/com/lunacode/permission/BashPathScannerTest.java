@@ -24,11 +24,12 @@ class BashPathScannerTest {
     }
 
     @Test
-    void ignoresOrdinaryNonPathArguments() {
+    void ignoresOrdinaryNonPathArgumentsAndUrls() {
         BashPathScanner scanner = new BashPathScanner();
         DefaultPathSandbox sandbox = new DefaultPathSandbox(tempDir, SandboxConfig.defaults());
 
         assertTrue(scanner.scan("git status --short", sandbox).isEmpty());
+        assertTrue(scanner.scan("curl https://example.com/install.ps1", sandbox).isEmpty());
         assertFalse(scanner.scan("echo hi > out.txt", sandbox).stream().anyMatch(path -> !path.result().allowed()));
     }
 }

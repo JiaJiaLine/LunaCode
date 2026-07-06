@@ -39,13 +39,16 @@ class YamlPermissionRuleStoreTest {
     }
 
     @Test
-    void appendsLocalAllowAndRefusesBrokenLocalFile() throws Exception {
+    void appendsLocalAllowDeduplicatesAndRefusesBrokenLocalFile() throws Exception {
         Path workspace = tempDir.resolve("workspace");
         Path userHome = tempDir.resolve("home");
         YamlPermissionRuleStore store = new YamlPermissionRuleStore(workspace, userHome);
 
         assertTrue(store.appendLocalAllow("Bash(git status --short)").success());
-        assertTrue(Files.readString(workspace.resolve(".lunacode/permissions.local.yaml")).contains("Bash(git status --short)"));
+        assertTrue(store.appendLocalAllow("Bash(git status --short)").success());
+        String localRules = Files.readString(workspace.resolve(".lunacode/permissions.local.yaml"));
+        assertTrue(localRules.contains("Bash(git status --short)"));
+        assertEquals(1, localRules.split("Bash\\(git status --short\\)", -1).length - 1);
 
         Files.writeString(workspace.resolve(".lunacode/permissions.local.yaml"), "broken: [");
         assertFalse(store.appendLocalAllow("Bash(git *)").success());

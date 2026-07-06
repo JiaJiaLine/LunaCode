@@ -20,7 +20,7 @@ public final class PermissionRuleParser {
             throw new IllegalArgumentException("rule 必须是 Tool(pattern) 格式: " + rawRule);
         }
         String toolName = normalized.substring(0, open).strip();
-        String pattern = normalized.substring(open + 1, close);
+        String pattern = unescapeLegacyPattern(normalized.substring(open + 1, close));
         if (toolName.isBlank()) {
             throw new IllegalArgumentException("rule 工具名不能为空: " + rawRule);
         }
@@ -36,5 +36,9 @@ public final class PermissionRuleParser {
                 order,
                 source
         );
+    }
+
+    private String unescapeLegacyPattern(String pattern) {
+        return pattern.replace("\\)", ")").replace("\\(", "(");
     }
 }

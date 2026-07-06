@@ -18,3 +18,36 @@
 
 - rule: "WriteFile(/project/SkillTest/pet-shop/main.js)"
   effect: allow
+
+- rule: "Bash(mkdir F:\\LunaCode\\SkillTest\\game-shop*)"
+  effect: allow
+
+- rule: "WriteFile(/project/SkillTest/game-shop/style.css)"
+  effect: allow
+
+- rule: "WriteFile(/project/SkillTest/game-shop/main.js)"
+  effect: allow
+
+- rule: "Bash(dir F:\\LunaCode\\SkillTest\\game-shop*)"
+  effect: allow
+
+- rule: "ReadFile(/project/.lunacode/permissions.local.yaml)"
+  effect: allow
+
+- rule: "Bash(mkdir F:\\LunaCode\\SkillTest\\tooltest*)"
+  effect: allow
+
+- rule: "WriteFile(/project/SkillTest/tooltest/hello.txt)"
+  effect: allow
+
+- rule: "WriteFile(/project/SkillTest/tooltest/secret/notes.txt)"
+  effect: allow
+
+- rule: "Bash(dir F:\\LunaCode\\SkillTest\\tooltest\\secret*)"
+  effect: allow
+
+- rule: "WriteFile(/project/SkillTest/tooltest/test2.txt)"
+  effect: allow
+
+- rule: "Bash(dir F:\\LunaCode\\SkillTest\\tooltest\\notexist*)"
+  effect: allow

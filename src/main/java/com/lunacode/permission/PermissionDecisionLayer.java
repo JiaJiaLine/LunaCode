@@ -2,6 +2,7 @@ package com.lunacode.permission;
 
 public enum PermissionDecisionLayer {
     BLACKLIST,
+    NETWORK,
     SANDBOX,
     RULE_DENY,
     RULE_ALLOW,
