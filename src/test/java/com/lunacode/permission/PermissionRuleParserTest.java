@@ -20,6 +20,13 @@ class PermissionRuleParserTest {
     }
 
     @Test
+    void unescapesLegacyParenthesesInPattern() {
+        PermissionRule rule = parser.parse("Bash(echo \\))", "allow", PermissionRuleLevel.LOCAL, 1, Path.of("permissions.yaml"));
+
+        assertEquals("echo )", rule.pattern());
+    }
+
+    @Test
     void rejectsInvalidRuleFormat() {
         assertThrows(IllegalArgumentException.class, () -> parser.parse("Bash git *", "allow", PermissionRuleLevel.USER, 1, null));
         assertThrows(IllegalArgumentException.class, () -> parser.parse("(git *)", "allow", PermissionRuleLevel.USER, 1, null));

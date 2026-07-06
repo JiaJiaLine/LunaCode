@@ -1,35 +1,50 @@
 package com.lunacode.permission;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.lunacode.config.SandboxConfig;
 import com.lunacode.tool.ToolUse;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 public final class PermissionTargetExtractor {
     private final PathSandbox pathSandbox;
     private final BashPathScanner bashPathScanner;
+    private final BashNetworkAccessScanner networkAccessScanner;
     private final SensitivePathPolicy sensitivePathPolicy;
+    private final SandboxConfig sandboxConfig;
 
     public PermissionTargetExtractor(PathSandbox pathSandbox, BashPathScanner bashPathScanner, SensitivePathPolicy sensitivePathPolicy) {
+        this(pathSandbox, bashPathScanner, sensitivePathPolicy, SandboxConfig.defaults());
+    }
+
+    public PermissionTargetExtractor(PathSandbox pathSandbox, BashPathScanner bashPathScanner, SensitivePathPolicy sensitivePathPolicy, SandboxConfig sandboxConfig) {
         this.pathSandbox = pathSandbox;
         this.bashPathScanner = bashPathScanner == null ? new BashPathScanner() : bashPathScanner;
+        this.networkAccessScanner = new BashNetworkAccessScanner();
         this.sensitivePathPolicy = sensitivePathPolicy == null ? new SensitivePathPolicy() : sensitivePathPolicy;
+        this.sandboxConfig = sandboxConfig == null ? SandboxConfig.defaults() : sandboxConfig;
     }
 
     public ExtractionResult extract(ToolUse toolUse) {
         if (toolUse == null) {
-            return new ExtractionResult(List.of(), List.of("工具调用为空"), false);
+            return new ExtractionResult(List.of(), List.of("工具调用为空"), List.of(), false);
         }
         String toolName = toolUse.name();
         JsonNode input = toolUse.input();
         List<PermissionTarget> targets = new ArrayList<>();
         List<String> sandboxErrors = new ArrayList<>();
+        List<String> networkErrors = new ArrayList<>();
         boolean[] sensitive = new boolean[]{false};
         switch (toolName) {
             case "Bash" -> {
                 String command = text(input, "command");
                 targets.add(PermissionTarget.command(toolName, command));
+                if (!sandboxConfig.networkEnabled()) {
+                    Optional<String> networkError = networkAccessScanner.firstNetworkAccess(command, pathSandbox);
+                    networkError.ifPresent(networkErrors::add);
+                }
                 for (BashPathScanner.ScannedPath path : bashPathScanner.scan(command, pathSandbox)) {
                     if (path.result().allowed()) {
                         addPathTarget(targets, toolName, path.result().path(), sensitive);
@@ -55,7 +70,7 @@ public final class PermissionTargetExtractor {
             }
             default -> targets.add(PermissionTarget.pattern(toolName, input == null ? "{}" : input.toString()));
         }
-        return new ExtractionResult(targets, sandboxErrors, sensitive[0]);
+        return new ExtractionResult(targets, sandboxErrors, networkErrors, sensitive[0]);
     }
 
     private void addValidatedPath(
@@ -124,10 +139,11 @@ public final class PermissionTargetExtractor {
         return Math.min(star, question);
     }
 
-    public record ExtractionResult(List<PermissionTarget> targets, List<String> sandboxErrors, boolean containsSensitivePath) {
+    public record ExtractionResult(List<PermissionTarget> targets, List<String> sandboxErrors, List<String> networkErrors, boolean containsSensitivePath) {
         public ExtractionResult {
             targets = targets == null ? List.of() : List.copyOf(targets);
             sandboxErrors = sandboxErrors == null ? List.of() : List.copyOf(sandboxErrors);
+            networkErrors = networkErrors == null ? List.of() : List.copyOf(networkErrors);
         }
     }
 }

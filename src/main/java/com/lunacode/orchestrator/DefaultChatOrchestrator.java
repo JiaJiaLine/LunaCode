@@ -359,7 +359,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private AgentLoop createAgentLoop(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, ToolRegistry toolRegistry, ToolExecutor toolExecutor) {
         PathSandbox pathSandbox = new DefaultPathSandbox(workspaceRoot, config.sandbox());
         SensitivePathPolicy sensitivePathPolicy = new SensitivePathPolicy();
-        DefaultPermissionEngine permissionEngine = new DefaultPermissionEngine(permissionRuleStore, new PermissionTargetExtractor(pathSandbox, new BashPathScanner(), sensitivePathPolicy), new PermissionRuleMatcher(), new PermissionModePolicy(), new DangerousCommandBlacklist());
+        DefaultPermissionEngine permissionEngine = new DefaultPermissionEngine(permissionRuleStore, new PermissionTargetExtractor(pathSandbox, new BashPathScanner(), sensitivePathPolicy, config.sandbox()), new PermissionRuleMatcher(), new PermissionModePolicy(), new DangerousCommandBlacklist());
         AgentToolRunner toolRunner = new AgentToolRunner(toolRegistry, toolExecutor, new ToolBatchPlanner(), new DefaultToolPermissionGateway(workspaceRoot, permissionEngine), permissionBroker, permissionRuleStore, hookRuntime, this::currentSessionId);
         AgentTurnRunner turnRunner = new AgentTurnRunner(conversationManager, provider);
         return new DefaultAgentLoop(conversationManager, config, toolRegistry, toolRunner, turnRunner, new LoopDecisionMaker(), promptContextBuilder, contextManager, hookRuntime, this::currentSessionId);

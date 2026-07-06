@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>像素胶囊 — 游戏商店</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- 顶部导航 -->
+  <header class="header">
+    <div class="header__inner">
+      <a href="#" class="logo">
+        <span class="logo__cube"></span>
+        像素胶囊
+      </a>
+      <nav class="header__nav">
+        <a href="#" class="nav-link nav-link--active">新品</a>
+        <a href="#" class="nav-link">热销</a>
+        <a href="#" class="nav-link">即将发售</a>
+      </nav>
+      <div class="header__actions">
+        <button class="icon-btn" aria-label="搜索">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M13 13L17 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button class="icon-btn" aria-label="购物车">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M3 4H5L6 13H16L18 6H5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="7" cy="16" r="1" fill="currentColor"/>
+            <circle cx="15" cy="16" r="1" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- 精选横幅 -->
+    <section class="hero">
+      <div class="hero__bg"></div>
+      <div class="hero__content">
+        <span class="hero__tag">🌟 编辑推荐</span>
+        <h1 class="hero__title">黄泉之路</h1>
+        <p class="hero__desc">以独特的水墨画风演绎经典横版动作游戏。在这个属于武士的复仇故事中，每一次挥刀都是一笔墨迹。</p>
+        <div class="hero__meta">
+          <span class="hero__platform">PC · PS5 · Xbox</span>
+          <span class="hero__price">¥198.00</span>
+        </div>
+        <button class="btn btn--primary">加入购物车</button>
+      </div>
+    </section>
+
+    <!-- 筛选标签 -->
+    <section class="filters">
+      <div class="filters__inner">
+        <button class="filter-pill filter-pill--active" data-filter="all">全部</button>
+        <button class="filter-pill" data-filter="action">动作</button>
+        <button class="filter-pill" data-filter="rpg">RPG</button>
+        <button class="filter-pill" data-filter="adventure">冒险</button>
+        <button class="filter-pill" data-filter="strategy">策略</button>
+        <button class="filter-pill" data-filter="indie">独立</button>
+      </div>
+    </section>
+
+    <!-- 游戏网格 -->
+    <section class="games">
+      <div class="games__grid" id="gameGrid"></div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="footer__inner">
+      <p class="footer__text">© 2026 像素胶囊 — 为每一份热爱</p>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>

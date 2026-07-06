@@ -3,6 +3,7 @@ package com.lunacode.permission;
 import com.lunacode.tool.ToolUse;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 public final class DefaultPermissionEngine {
@@ -40,6 +41,14 @@ public final class DefaultPermissionEngine {
         }
 
         PermissionTargetExtractor.ExtractionResult extracted = targetExtractor.extract(toolUse);
+        if (!extracted.networkErrors().isEmpty()) {
+            return PermissionEvaluation.deny(
+                    PermissionDecisionLayer.NETWORK,
+                    String.join("; ", extracted.networkErrors()),
+                    List.of(),
+                    rules.warnings()
+            );
+        }
         if (!extracted.sandboxErrors().isEmpty()) {
             return PermissionEvaluation.deny(
                     PermissionDecisionLayer.SANDBOX,
@@ -78,12 +87,67 @@ public final class DefaultPermissionEngine {
         if (toolUse == null || targets == null || targets.isEmpty()) {
             return null;
         }
+        if ("Bash".equals(toolUse.name())) {
+            String pattern = suggestedBashPattern(text(toolUse, "command"));
+            if (pattern != null && !pattern.isBlank()) {
+                return "Bash(" + pattern + ")";
+            }
+        }
         PermissionTarget preferred = targets.stream()
                 .filter(target -> target.kind() == PermissionTargetKind.FILE_PATH || target.kind() == PermissionTargetKind.COMMAND_TEXT)
                 .findFirst()
                 .orElse(targets.get(0));
-        String value = preferred.value().replace(")", "\\)");
-        return toolUse.name() + "(" + value + ")";
+        return toolUse.name() + "(" + preferred.value() + ")";
+    }
+
+    private String suggestedBashPattern(String command) {
+        String normalized = normalizeCommand(command);
+        if (normalized.isBlank()) {
+            return null;
+        }
+        String firstSegment = firstCommandSegment(normalized);
+        String withoutRedirection = stripTrailingRedirection(firstSegment).strip();
+        String base = withoutRedirection.isBlank() ? firstSegment.strip() : withoutRedirection;
+        if (base.isBlank()) {
+            return normalized;
+        }
+        boolean generalized = !base.equals(normalized);
+        return generalized ? base + "*" : base;
+    }
+
+    private String normalizeCommand(String command) {
+        return command == null ? "" : command.replaceAll("\\s+", " ").strip();
+    }
+
+    private String firstCommandSegment(String command) {
+        char quote = 0;
+        for (int i = 0; i < command.length(); i++) {
+            char c = command.charAt(i);
+            if (quote != 0) {
+                if (c == quote) {
+                    quote = 0;
+                }
+                continue;
+            }
+            if (c == '\'' || c == '"') {
+                quote = c;
+                continue;
+            }
+            if (c == ';' || c == '|') {
+                return command.substring(0, i).strip();
+            }
+            if (c == '&' && i + 1 < command.length() && command.charAt(i + 1) == '&') {
+                return command.substring(0, i).strip();
+            }
+        }
+        return command.strip();
+    }
+
+    private String stripTrailingRedirection(String segment) {
+        String result = segment;
+        result = result.replaceAll("\\s+\\d?>>?&?\\S+.*$", "");
+        result = result.replaceAll("\\s+>>?\\S+.*$", "");
+        return result;
     }
 
     private String text(ToolUse toolUse, String name) {
