@@ -66,6 +66,7 @@ public final class MessageChannelBuilder {
                 projectInstructions,
                 memory,
                 skillContext,
+                config == null ? Optional.empty() : config.subAgentSystemPrompt(),
                 reminders,
                 history
         );

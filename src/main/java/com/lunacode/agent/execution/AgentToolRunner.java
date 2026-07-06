@@ -18,6 +18,8 @@ import com.lunacode.permission.PermissionEvaluation;
 import com.lunacode.permission.PermissionRuleStore;
 import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.runtime.CancellationToken;
+import com.lunacode.subagent.AgentExecutionContextHolder;
+import com.lunacode.subagent.SubAgentParentContext;
 import com.lunacode.tool.Tool;
 import com.lunacode.tool.ToolBatch;
 import com.lunacode.tool.ToolBatchPlanner;
@@ -117,6 +119,17 @@ public final class AgentToolRunner {
             AgentEventSink sink,
             int turnIndex
     ) {
+        return executeToolBatches(toolUses, config, token, sink, turnIndex, null);
+    }
+
+    public List<ToolExecutionRecord> executeToolBatches(
+            List<ToolUse> toolUses,
+            AgentRunConfig config,
+            CancellationToken token,
+            AgentEventSink sink,
+            int turnIndex,
+            SubAgentParentContext parentContext
+    ) {
         List<ToolExecutionRecord> records = new ArrayList<>();
         HookExecutionScope scope = scope(config, turnIndex);
         for (ToolBatch batch : batchPlanner.plan(toolUses, toolRegistry)) {
@@ -128,7 +141,7 @@ public final class AgentToolRunner {
                 for (int i = 0; i < batch.toolUses().size(); i++) {
                     int index = i;
                     ToolUse toolUse = batch.toolUses().get(i);
-                    futures.add(CompletableFuture.supplyAsync(() -> new IndexedRecord(index, executeOne(toolUse, config, sink, scope))));
+                    futures.add(CompletableFuture.supplyAsync(() -> new IndexedRecord(index, executeOne(toolUse, config, sink, scope, parentContext))));
                 }
                 futures.stream()
                         .map(CompletableFuture::join)
@@ -140,14 +153,21 @@ public final class AgentToolRunner {
                     if (token.isCancellationRequested()) {
                         return records;
                     }
-                    records.add(executeOne(toolUse, config, sink, scope));
+                    records.add(executeOne(toolUse, config, sink, scope, parentContext));
                 }
             }
         }
         return List.copyOf(records);
     }
 
-    private ToolExecutionRecord executeOne(ToolUse toolUse, AgentRunConfig config, AgentEventSink sink, HookExecutionScope scope) {
+    private ToolExecutionRecord executeOne(ToolUse toolUse, AgentRunConfig config, AgentEventSink sink, HookExecutionScope scope, SubAgentParentContext parentContext) {
+        if (parentContext != null) {
+            return AgentExecutionContextHolder.withContext(parentContext, () -> executeOneInternal(toolUse, config, sink, scope));
+        }
+        return executeOneInternal(toolUse, config, sink, scope);
+    }
+
+    private ToolExecutionRecord executeOneInternal(ToolUse toolUse, AgentRunConfig config, AgentEventSink sink, HookExecutionScope scope) {
         long started = System.nanoTime();
         ToolResult result;
         if (config.toolAccessPolicy() != null && !config.toolAccessPolicy().allows(toolUse.name())) {

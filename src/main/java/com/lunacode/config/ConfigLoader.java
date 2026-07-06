@@ -58,7 +58,7 @@ public class ConfigLoader {
         URI baseUrl = parseUri(requireText(raw.baseUrl(), "base_url"));
         String apiKey = resolveApiKey(requireText(raw.apiKey(), "api_key"));
         ThinkingConfig thinking = toThinkingConfig(raw.thinking());
-        AgentConfig agent = toAgentConfig(raw.agent());
+        AgentConfig agent = toAgentConfig(raw.agent(), raw.enableVerificationAgent(), raw.enableVerificationAgentSnake());
         PermissionConfig permissions = toPermissionConfig(raw.permissions());
         SandboxConfig sandbox = toSandboxConfig(raw.sandbox());
         McpConfig mcp = toMergedMcpConfig(readUserMcp(path), raw.mcp());
@@ -135,11 +135,23 @@ public class ConfigLoader {
         return new ThinkingConfig(raw.enabled(), raw.budgetTokens());
     }
 
-    private AgentConfig toAgentConfig(RawAgent raw) {
-        if (raw == null) {
-            return AgentConfig.defaults();
-        }
+    private AgentConfig toAgentConfig(RawAgent raw, Boolean topLevelEnableVerificationAgent, Boolean topLevelEnableVerificationAgentSnake) {
         AgentConfig defaults = AgentConfig.defaults();
+        if (raw == null) {
+            boolean enableVerificationAgent = firstNonNull(
+                    topLevelEnableVerificationAgent,
+                    topLevelEnableVerificationAgentSnake,
+                    defaults.enableVerificationAgent()
+            );
+            return new AgentConfig(
+                    defaults.maxIterations(),
+                    defaults.maxConsecutiveUnknownTools(),
+                    defaults.planFile(),
+                    defaults.autoBackgroundMs(),
+                    defaults.modelAliases(),
+                    enableVerificationAgent
+            );
+        }
         int maxIterations = raw.maxIterations() == null ? defaults.maxIterations() : raw.maxIterations();
         int maxUnknownTools = raw.maxConsecutiveUnknownTools() == null
                 ? defaults.maxConsecutiveUnknownTools()
@@ -147,7 +159,19 @@ public class ConfigLoader {
         Path planFile = raw.planFile() == null || raw.planFile().isBlank()
                 ? defaults.planFile()
                 : Path.of(raw.planFile().trim());
-        return new AgentConfig(maxIterations, maxUnknownTools, planFile);
+        long autoBackgroundMs = raw.autoBackgroundMs() == null
+                ? defaults.autoBackgroundMs()
+                : raw.autoBackgroundMs();
+        Map<String, String> modelAliases = raw.modelAliases() == null
+                ? defaults.modelAliases()
+                : sanitizeStringMap(raw.modelAliases(), "agent.model_aliases");
+        boolean enableVerificationAgent = firstNonNull(
+                raw.enableVerificationAgent(),
+                topLevelEnableVerificationAgent,
+                topLevelEnableVerificationAgentSnake,
+                defaults.enableVerificationAgent()
+        );
+        return new AgentConfig(maxIterations, maxUnknownTools, planFile, autoBackgroundMs, modelAliases, enableVerificationAgent);
     }
 
     private PermissionConfig toPermissionConfig(RawPermissions raw) {
@@ -334,6 +358,29 @@ public class ConfigLoader {
         return value != null && !value.isBlank();
     }
 
+    @SafeVarargs
+    private final <T> T firstNonNull(T... values) {
+        for (T value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private Map<String, String> sanitizeStringMap(Map<String, String> values, String field) {
+        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            String key = entry.getKey() == null ? "" : entry.getKey().strip();
+            String value = entry.getValue() == null ? "" : entry.getValue().strip();
+            if (key.isBlank() || value.isBlank()) {
+                throw new ConfigException(field + " 不能包含空 key 或空 value");
+            }
+            result.put(key, value);
+        }
+        return Map.copyOf(result);
+    }
+
     private static Path defaultUserConfigPath() {
         return Path.of(System.getProperty("user.home"), ".lunacode", "config.yaml");
     }
@@ -344,6 +391,8 @@ public class ConfigLoader {
             @JsonProperty("base_url") String baseUrl,
             @JsonProperty("api_key") String apiKey,
             RawThinking thinking,
+            @JsonProperty("enableVerificationAgent") Boolean enableVerificationAgent,
+            @JsonProperty("enable_verification_agent") Boolean enableVerificationAgentSnake,
             RawAgent agent,
             RawPermissions permissions,
             RawSandbox sandbox,
@@ -360,7 +409,10 @@ public class ConfigLoader {
     private record RawAgent(
             @JsonProperty("max_iterations") Integer maxIterations,
             @JsonProperty("max_consecutive_unknown_tools") Integer maxConsecutiveUnknownTools,
-            @JsonProperty("plan_file") String planFile
+            @JsonProperty("plan_file") String planFile,
+            @JsonProperty("auto_background_ms") Long autoBackgroundMs,
+            @JsonProperty("model_aliases") Map<String, String> modelAliases,
+            @JsonProperty("enable_verification_agent") Boolean enableVerificationAgent
     ) {}
 
     private record RawPermissions(

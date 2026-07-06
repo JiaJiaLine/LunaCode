@@ -1,5 +1,8 @@
 package com.lunacode.app;
 
+import com.lunacode.background.DefaultBackgroundTaskManager;
+import com.lunacode.background.DefaultForegroundSubAgentTracker;
+import com.lunacode.background.TaskNotificationFormatter;
 import com.lunacode.command.BuiltinSlashCommands;
 import com.lunacode.command.SlashCommandRegistry;
 import com.lunacode.config.ConfigLoader;
@@ -23,7 +26,7 @@ import com.lunacode.hook.InMemoryHookReminderStore;
 import com.lunacode.hook.NoOpHookRuntime;
 import com.lunacode.hook.PromptHookActionExecutor;
 import com.lunacode.hook.ShellCommandRunner;
-import com.lunacode.hook.SubAgentPlaceholderActionExecutor;
+import com.lunacode.hook.RealSubAgentHookActionExecutor;
 import com.lunacode.instructions.DefaultProjectInstructionLoader;
 import com.lunacode.interaction.BlockingUserQuestionBroker;
 import com.lunacode.mcp.McpClientManager;
@@ -58,6 +61,17 @@ import com.lunacode.skill.FileSystemSkillSource;
 import com.lunacode.skill.FrontmatterSkillParser;
 import com.lunacode.skill.SkillCatalog;
 import com.lunacode.skill.SkillDiagnostic;
+import com.lunacode.subagent.AgentDefinitionCatalog;
+import com.lunacode.subagent.AgentDefinitionDiagnostic;
+import com.lunacode.subagent.BuiltinAgentDefinitionSource;
+import com.lunacode.subagent.DefaultAgentDefinitionCatalog;
+import com.lunacode.subagent.DefaultSubAgentRunnerFactory;
+import com.lunacode.subagent.DefaultSubAgentService;
+import com.lunacode.subagent.FileSystemAgentDefinitionSource;
+import com.lunacode.subagent.FrontmatterAgentDefinitionParser;
+import com.lunacode.subagent.PluginAgentDefinitionSource;
+import com.lunacode.subagent.SubAgentService;
+import com.lunacode.tool.AgentTool;
 import com.lunacode.tool.AskUserQuestionTool;
 import com.lunacode.tool.BashTool;
 import com.lunacode.tool.BubblewrapCommandSandbox;
@@ -130,6 +144,7 @@ public class LunaCodeApplication {
             return;
         }
         WorkspacePathResolver resolver = new WorkspacePathResolver(workspaceRoot, pathSandbox);
+        AtomicReference<SubAgentService> subAgentServiceRef = new AtomicReference<>();
         DefaultToolRegistry registry = new DefaultToolRegistry();
         registry.register(new ReadFileTool(resolver));
         registry.register(new WriteFileTool(resolver));
@@ -139,6 +154,7 @@ public class LunaCodeApplication {
         registry.register(new GrepTool(resolver));
         registry.register(new AskUserQuestionTool());
         registry.register(new ToolSearchTool(registry));
+        registry.register(new AgentTool(subAgentServiceRef::get));
 
         SlashCommandRegistry builtinCommandProbe = new SlashCommandRegistry();
         BuiltinSlashCommands.registerAll(builtinCommandProbe);
@@ -197,7 +213,7 @@ public class LunaCodeApplication {
                                     new CommandHookActionExecutor(new ShellCommandRunner(), toolContext),
                                     new PromptHookActionExecutor(),
                                     new HttpHookActionExecutor(),
-                                    new SubAgentPlaceholderActionExecutor()
+                                    new RealSubAgentHookActionExecutor(subAgentServiceRef::get)
                             ),
                             new InMemoryHookOnceTracker(),
                             hookReminderStore,
@@ -207,9 +223,6 @@ public class LunaCodeApplication {
             System.err.println(e.getMessage());
             return;
         }
-        HookExecutionScope applicationHookScope = new HookExecutionScope(sessionService.currentSession().id(), 0, workspaceRoot);
-        hookRuntime.emit(HookEventName.STARTUP, HookContext.empty(HookEventName.STARTUP), applicationHookScope);
-        hookRuntime.emit(HookEventName.SESSION_START, HookContext.empty(HookEventName.SESSION_START), applicationHookScope);
 
         AtomicReference<LanternaLunaTui> tuiRef = new AtomicReference<>();
         Runnable requestRender = () -> {
@@ -234,6 +247,36 @@ public class LunaCodeApplication {
                 new DefaultSkillPromptContextLoader(skillCatalog)
         );
 
+        AgentDefinitionCatalog agentDefinitionCatalog = new DefaultAgentDefinitionCatalog(
+                List.of(new PluginAgentDefinitionSource(), new BuiltinAgentDefinitionSource(config.agent()), FileSystemAgentDefinitionSource.user(), FileSystemAgentDefinitionSource.project()),
+                new FrontmatterAgentDefinitionParser(),
+                workspaceRoot,
+                userHome,
+                () -> registry.getEnabledTools().stream()
+                        .map(Tool::name)
+                        .collect(Collectors.toCollection(LinkedHashSet::new)),
+                config.agent()
+        );
+        printAgentDiagnostics(agentDefinitionCatalog);
+        DefaultSubAgentRunnerFactory subAgentRunnerFactory = new DefaultSubAgentRunnerFactory(
+                provider,
+                config,
+                registry,
+                toolExecutor,
+                promptContextBuilder,
+                hookRuntime,
+                () -> sessionService.currentSession().id()
+        );
+        DefaultBackgroundTaskManager backgroundTaskManager = new DefaultBackgroundTaskManager(subAgentRunnerFactory);
+        DefaultForegroundSubAgentTracker foregroundSubAgentTracker = new DefaultForegroundSubAgentTracker(backgroundTaskManager);
+        SubAgentService subAgentService = new DefaultSubAgentService(
+                agentDefinitionCatalog,
+                subAgentRunnerFactory,
+                backgroundTaskManager,
+                foregroundSubAgentTracker,
+                config
+        );
+        subAgentServiceRef.set(subAgentService);
         DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(
                 conversationManager,
                 provider,
@@ -252,6 +295,10 @@ public class LunaCodeApplication {
                 requestRender
         );
         orchestrator.configureSkills(skillCatalog, skillPlanner, null);
+        orchestrator.configureBackgroundTasks(backgroundTaskManager, foregroundSubAgentTracker, new TaskNotificationFormatter());
+        HookExecutionScope applicationHookScope = new HookExecutionScope(sessionService.currentSession().id(), 0, workspaceRoot);
+        hookRuntime.emit(HookEventName.STARTUP, HookContext.empty(HookEventName.STARTUP), applicationHookScope);
+        hookRuntime.emit(HookEventName.SESSION_START, HookContext.empty(HookEventName.SESSION_START), applicationHookScope);
         printSkillDiagnostics(skillCatalog);
 
         LanternaLunaTui tui = new LanternaLunaTui(conversationManager, orchestrator);
@@ -267,6 +314,14 @@ public class LunaCodeApplication {
         }
     }
 
+    private void printAgentDiagnostics(AgentDefinitionCatalog catalog) {
+        if (catalog == null) {
+            return;
+        }
+        for (AgentDefinitionDiagnostic diagnostic : catalog.diagnostics()) {
+            System.err.println("Agent " + diagnostic.level() + " [" + diagnostic.sourceId() + "]: " + diagnostic.message());
+        }
+    }
     private void printSkillDiagnostics(SkillCatalog skillCatalog) {
         if (skillCatalog == null) {
             return;

@@ -8,6 +8,10 @@ public interface ChatOrchestrator {
 
     void cancelCurrentRun();
 
+    default void backgroundCurrentSubAgentOrCancel() {
+        cancelCurrentRun();
+    }
+
     default SlashCommandCompletion completeSlashCommand(String input, int cursorIndex) {
         return new SlashCommandCompletion.NoMatch();
     }

@@ -126,7 +126,7 @@ public class LanternaLunaTui implements LunaTui, CommandUiController {
         int second = reader.read(ESC_SEQUENCE_TIMEOUT_MILLIS);
         if (second == NonBlockingReader.READ_EXPIRED) {
             if (isBusy()) {
-                orchestrator.cancelCurrentRun();
+                orchestrator.backgroundCurrentSubAgentOrCancel();
                 return true;
             }
             return false;
