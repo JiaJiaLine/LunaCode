@@ -36,4 +36,16 @@ public record ToolExecutionContext(
         sandboxConfig = sandboxConfig == null ? SandboxConfig.defaults() : sandboxConfig;
         sandboxRoots = sandboxRoots == null ? List.of() : List.copyOf(sandboxRoots);
     }
+    public ToolExecutionContext withWorkspaceRoot(Path newWorkspaceRoot) {
+        return new ToolExecutionContext(
+                newWorkspaceRoot,
+                commandTimeout,
+                maxContentChars,
+                masker,
+                userQuestionBroker,
+                commandSandbox,
+                sandboxConfig,
+                sandboxRoots
+        );
+    }
 }

@@ -28,7 +28,8 @@ public class WorkspacePathResolver {
         if (requestedPath == null || requestedPath.isBlank()) {
             throw new IllegalArgumentException("路径不能为空");
         }
-        if (pathSandbox != null) {
+        Path effectiveRoot = effectiveWorkspaceRoot();
+        if (pathSandbox != null && effectiveRoot.equals(workspaceRoot)) {
             PathSandbox.Result result = pathSandbox.validate(requestedPath, intent == null ? PathIntent.READ : intent);
             if (!result.allowed()) {
                 throw new IllegalArgumentException(result.reason());
@@ -36,14 +37,14 @@ public class WorkspacePathResolver {
             return result.path().realPath();
         }
         Path raw = Path.of(requestedPath);
-        Path resolved = raw.isAbsolute() ? raw.normalize() : workspaceRoot.resolve(raw).normalize();
-        if (!resolved.startsWith(workspaceRoot)) {
+        Path resolved = raw.isAbsolute() ? raw.normalize() : effectiveRoot.resolve(raw).normalize();
+        if (!resolved.startsWith(effectiveRoot)) {
             throw new IllegalArgumentException("路径超出工作区: " + requestedPath);
         }
         try {
             Path existing = Files.exists(resolved) ? resolved : nearestExistingParent(resolved);
             if (existing != null) {
-                Path realRoot = workspaceRoot.toRealPath();
+                Path realRoot = effectiveRoot.toRealPath();
                 Path realExisting = existing.toRealPath();
                 if (!realExisting.startsWith(realRoot)) {
                     throw new IllegalArgumentException("路径符号链接逃逸工作区: " + requestedPath);
@@ -68,9 +69,14 @@ public class WorkspacePathResolver {
 
     public String relativize(Path path) {
         Path normalized = path.toAbsolutePath().normalize();
-        if (normalized.startsWith(workspaceRoot)) {
-            return workspaceRoot.relativize(normalized).toString().replace('\\', '/');
+        Path effectiveRoot = effectiveWorkspaceRoot();
+        if (normalized.startsWith(effectiveRoot)) {
+            return effectiveRoot.relativize(normalized).toString().replace('\\', '/');
         }
         return normalized.toString().replace('\\', '/');
+    }
+
+    private Path effectiveWorkspaceRoot() {
+        return ToolExecutionScopeHolder.currentWorkDir().orElse(workspaceRoot);
     }
 }

@@ -9,6 +9,11 @@ import com.lunacode.permission.PermissionMode;
 import com.lunacode.runtime.AgentMode;
 import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.tool.ToolResult;
+import com.lunacode.worktree.WorktreeCreateRequest;
+import com.lunacode.worktree.WorktreeCreateResult;
+import com.lunacode.worktree.WorktreeKind;
+import com.lunacode.worktree.WorktreeManager;
+import com.lunacode.worktree.WorktreeRecord;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -25,6 +30,7 @@ public final class DefaultSubAgentService implements SubAgentService {
     private final BackgroundTaskManager backgroundTaskManager;
     private final ForegroundSubAgentTracker foregroundTracker;
     private final ProviderConfig providerConfig;
+    private final WorktreeManager worktreeManager;
 
     public DefaultSubAgentService(
             AgentDefinitionCatalog catalog,
@@ -33,11 +39,23 @@ public final class DefaultSubAgentService implements SubAgentService {
             ForegroundSubAgentTracker foregroundTracker,
             ProviderConfig providerConfig
     ) {
+        this(catalog, runnerFactory, backgroundTaskManager, foregroundTracker, providerConfig, null);
+    }
+
+    public DefaultSubAgentService(
+            AgentDefinitionCatalog catalog,
+            SubAgentRunnerFactory runnerFactory,
+            BackgroundTaskManager backgroundTaskManager,
+            ForegroundSubAgentTracker foregroundTracker,
+            ProviderConfig providerConfig,
+            WorktreeManager worktreeManager
+    ) {
         this.catalog = catalog;
         this.runnerFactory = runnerFactory;
         this.backgroundTaskManager = backgroundTaskManager;
         this.foregroundTracker = foregroundTracker;
         this.providerConfig = providerConfig;
+        this.worktreeManager = worktreeManager;
     }
 
     @Override
@@ -70,14 +88,21 @@ public final class DefaultSubAgentService implements SubAgentService {
         if (definition.isEmpty()) {
             return error("子 Agent 类型不存在: " + request.subagentType().orElse(""), "subagent_not_found");
         }
+        Optional<WorktreeRecord> worktree;
+        try {
+            worktree = prepareWorktree(definition.get(), parentContext);
+        } catch (RuntimeException e) {
+            return error("子 Agent Worktree 创建失败: " + e.getMessage(), "worktree_create_failed");
+        }
         boolean runInBackground = request.runInBackground() || definition.get().background();
         SubAgentLaunchRequest launch = new SubAgentLaunchRequest(
                 SubAgentKind.DEFINED,
                 definition,
-                request.task(),
+                worktree.map(record -> withWorktreeInstructions(request.task(), record)).orElse(request.task()),
                 runInBackground,
                 parentContext,
-                SubAgentNotificationPolicy.TOOL
+                SubAgentNotificationPolicy.TOOL,
+                worktree
         );
         if (runInBackground) {
             return asyncResult(backgroundTaskManager.launch(launch), definition.get().agentType());
@@ -85,6 +110,29 @@ public final class DefaultSubAgentService implements SubAgentService {
         return runForeground(launch);
     }
 
+    private Optional<WorktreeRecord> prepareWorktree(AgentDefinition definition, SubAgentParentContext parentContext) {
+        if (definition.isolation() != AgentIsolation.WORKTREE) {
+            return Optional.empty();
+        }
+        if (worktreeManager == null) {
+            throw new IllegalStateException("当前未启用 Worktree 管理器");
+        }
+        String sessionId = parentContext == null ? "" : parentContext.sessionId();
+        WorktreeCreateResult result = worktreeManager.create(WorktreeCreateRequest.automatic(
+                worktreeManager.generateAgentName(),
+                WorktreeKind.AGENT,
+                sessionId
+        ));
+        return Optional.of(result.record());
+    }
+
+    private String withWorktreeInstructions(String task, WorktreeRecord record) {
+        return "你正在隔离 Worktree 中工作。所有文件和 Bash 工具调用默认发生在这个目录："
+                + record.path()
+                + "\n对应分支：" + record.branchName()
+                + "\n不要切换到主仓库目录；完成后主 Agent 会根据变更决定保留或清理 Worktree。\n\n"
+                + task;
+    }
     @Override
     public String launchFromHook(String subagentType, String task, HookExecutionScope scope) {
         Optional<AgentDefinition> definition = catalog.find(subagentType);

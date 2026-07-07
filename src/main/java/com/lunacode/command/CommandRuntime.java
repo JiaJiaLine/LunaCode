@@ -43,4 +43,8 @@ public interface CommandRuntime {
     void runSessionCommand(String rawInput);
 
     void runMemoryCommand(String rawInput);
+
+    default void runWorktreeCommand(String rawInput) {
+        showError("当前未启用 Worktree 命令");
+    }
 }

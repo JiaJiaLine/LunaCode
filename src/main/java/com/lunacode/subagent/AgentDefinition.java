@@ -16,6 +16,7 @@ public record AgentDefinition(
         String model,
         OptionalInt maxTurns,
         Optional<PermissionMode> permissionMode,
+        AgentIsolation isolation,
         boolean background,
         String systemPrompt,
         Path filePath,
@@ -33,9 +34,24 @@ public record AgentDefinition(
             Path filePath,
             AgentDefinitionSourceKind source
     ) {
-        this(agentType, whenToUse, tools, disallowedTools, model, maxTurns, permissionMode, false, systemPrompt, filePath, source);
+        this(agentType, whenToUse, tools, disallowedTools, model, maxTurns, permissionMode, AgentIsolation.NONE, false, systemPrompt, filePath, source);
     }
 
+    public AgentDefinition(
+            String agentType,
+            String whenToUse,
+            List<String> tools,
+            List<String> disallowedTools,
+            String model,
+            OptionalInt maxTurns,
+            Optional<PermissionMode> permissionMode,
+            boolean background,
+            String systemPrompt,
+            Path filePath,
+            AgentDefinitionSourceKind source
+    ) {
+        this(agentType, whenToUse, tools, disallowedTools, model, maxTurns, permissionMode, AgentIsolation.NONE, background, systemPrompt, filePath, source);
+    }
     public AgentDefinition {
         agentType = requireText(agentType, "agentType");
         whenToUse = requireText(whenToUse, "whenToUse");
@@ -44,6 +60,7 @@ public record AgentDefinition(
         model = strip(model).isBlank() ? "inherit" : strip(model);
         maxTurns = maxTurns == null ? OptionalInt.empty() : maxTurns;
         permissionMode = permissionMode == null ? Optional.empty() : permissionMode;
+        isolation = isolation == null ? AgentIsolation.NONE : isolation;
         systemPrompt = systemPrompt == null ? "" : systemPrompt.strip();
         filePath = Objects.requireNonNull(filePath, "filePath").toAbsolutePath().normalize();
         source = source == null ? AgentDefinitionSourceKind.BUILTIN : source;

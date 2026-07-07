@@ -60,6 +60,10 @@ public record AgentRunConfig(
         subAgentSystemPrompt = subAgentSystemPrompt == null ? Optional.empty() : subAgentSystemPrompt.map(String::strip).filter(value -> !value.isBlank());
     }
 
+    public AgentRunConfig withWorkDir(Path newWorkDir) {
+        Path normalizedWorkDir = Objects.requireNonNull(newWorkDir, "newWorkDir").toAbsolutePath().normalize();
+        return new AgentRunConfig(normalizedWorkDir, mode, permissionMode, normalizedWorkDir.resolve(".lunacode/plan.md"), maxIterations, maxConsecutiveUnknownTools, clock, toolAccessPolicy, modelOverride, skillPromptContext, subAgentSystemPrompt, backgroundAgent, forkAgent);
+    }
     public AgentRunConfig withToolAccessPolicy(ToolAccessPolicy policy) {
         return new AgentRunConfig(workDir, mode, permissionMode, planFile, maxIterations, maxConsecutiveUnknownTools, clock, policy, modelOverride, skillPromptContext, subAgentSystemPrompt, backgroundAgent, forkAgent);
     }

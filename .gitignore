@@ -1,4 +1,4 @@
-﻿target/
+target/
 *.class
 *.jar
 *.log
@@ -7,3 +7,6 @@
 config.yaml
 toolTest/
 .lunacode/tmp/
+.lunacode/worktrees/
+.lunacode/worktree_state.json
+.lunacode/worktree_session.json

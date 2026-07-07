@@ -91,6 +91,12 @@ import com.lunacode.tool.ToolExecutionContext;
 import com.lunacode.tool.ToolSearchTool;
 import com.lunacode.tool.WorkspacePathResolver;
 import com.lunacode.tool.WriteFileTool;
+import com.lunacode.worktree.DefaultWorktreeCommandHandler;
+import com.lunacode.worktree.DefaultWorktreeEnvironmentInitializer;
+import com.lunacode.worktree.DefaultWorktreeManager;
+import com.lunacode.worktree.ProcessGitWorktreeClient;
+import com.lunacode.worktree.WorktreeCommandHandler;
+import com.lunacode.worktree.WorktreeManager;
 import com.lunacode.tui.LanternaLunaTui;
 
 import java.nio.file.Path;
@@ -198,7 +204,13 @@ public class LunaCodeApplication {
                 config.sandbox(),
                 sandboxRoots
         );
-        DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);
+        DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);        ProcessGitWorktreeClient gitWorktreeClient = new ProcessGitWorktreeClient();
+        WorktreeManager worktreeManager = new DefaultWorktreeManager(
+                workspaceRoot,
+                gitWorktreeClient,
+                new DefaultWorktreeEnvironmentInitializer(gitWorktreeClient)
+        );
+        WorktreeCommandHandler worktreeCommandHandler = new DefaultWorktreeCommandHandler(worktreeManager);
 
         InMemoryHookReminderStore hookReminderStore = new InMemoryHookReminderStore();
         HookRuntime hookRuntime;
@@ -267,6 +279,7 @@ public class LunaCodeApplication {
                 hookRuntime,
                 () -> sessionService.currentSession().id()
         );
+        subAgentRunnerFactory.configureWorktreeManager(worktreeManager);
         DefaultBackgroundTaskManager backgroundTaskManager = new DefaultBackgroundTaskManager(subAgentRunnerFactory);
         DefaultForegroundSubAgentTracker foregroundSubAgentTracker = new DefaultForegroundSubAgentTracker(backgroundTaskManager);
         SubAgentService subAgentService = new DefaultSubAgentService(
@@ -274,7 +287,8 @@ public class LunaCodeApplication {
                 subAgentRunnerFactory,
                 backgroundTaskManager,
                 foregroundSubAgentTracker,
-                config
+                config,
+                worktreeManager
         );
         subAgentServiceRef.set(subAgentService);
         DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(
@@ -294,6 +308,7 @@ public class LunaCodeApplication {
                 hookRuntime,
                 requestRender
         );
+        orchestrator.configureWorktrees(worktreeManager, worktreeCommandHandler);
         orchestrator.configureSkills(skillCatalog, skillPlanner, null);
         orchestrator.configureBackgroundTasks(backgroundTaskManager, foregroundSubAgentTracker, new TaskNotificationFormatter());
         HookExecutionScope applicationHookScope = new HookExecutionScope(sessionService.currentSession().id(), 0, workspaceRoot);

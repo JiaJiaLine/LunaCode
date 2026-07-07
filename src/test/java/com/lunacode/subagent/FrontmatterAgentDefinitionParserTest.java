@@ -32,6 +32,7 @@ class FrontmatterAgentDefinitionParserTest {
                 model: sonnet
                 maxTurns: 20
                 permissionMode: dontAsk
+                isolation: worktree
                 background: true
                 ---
                 你是安全审查 Agent。
@@ -46,6 +47,7 @@ class FrontmatterAgentDefinitionParserTest {
         assertEquals("sonnet", definition.model());
         assertEquals(20, definition.maxTurns().orElseThrow());
         assertEquals(PermissionMode.DEFAULT, definition.permissionMode().orElseThrow());
+        assertEquals(AgentIsolation.WORKTREE, definition.isolation());
         assertTrue(definition.background());
         assertTrue(definition.systemPrompt().contains("安全审查"));
     }
