@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.lunacode.config.SandboxConfig;
 import com.lunacode.tool.ToolUse;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -25,6 +26,14 @@ public final class PermissionTargetExtractor {
         this.networkAccessScanner = new BashNetworkAccessScanner();
         this.sensitivePathPolicy = sensitivePathPolicy == null ? new SensitivePathPolicy() : sensitivePathPolicy;
         this.sandboxConfig = sandboxConfig == null ? SandboxConfig.defaults() : sandboxConfig;
+    }
+
+    public ExtractionResult extract(ToolUse toolUse, Path workDir) {
+        if (workDir == null) {
+            return extract(toolUse);
+        }
+        PathSandbox scopedSandbox = new DefaultPathSandbox(workDir, sandboxConfig);
+        return new PermissionTargetExtractor(scopedSandbox, bashPathScanner, sensitivePathPolicy, sandboxConfig).extract(toolUse);
     }
 
     public ExtractionResult extract(ToolUse toolUse) {

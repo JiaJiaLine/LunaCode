@@ -24,6 +24,8 @@ import com.lunacode.tool.Tool;
 import com.lunacode.tool.ToolBatch;
 import com.lunacode.tool.ToolBatchPlanner;
 import com.lunacode.tool.ToolExecutionRecord;
+import com.lunacode.tool.ToolExecutionScope;
+import com.lunacode.tool.ToolExecutionScopeHolder;
 import com.lunacode.tool.ToolExecutor;
 import com.lunacode.tool.ToolPermissionGateway;
 import com.lunacode.tool.ToolRegistry;
@@ -141,7 +143,7 @@ public final class AgentToolRunner {
                 for (int i = 0; i < batch.toolUses().size(); i++) {
                     int index = i;
                     ToolUse toolUse = batch.toolUses().get(i);
-                    futures.add(CompletableFuture.supplyAsync(() -> new IndexedRecord(index, executeOne(toolUse, config, sink, scope, parentContext))));
+                    futures.add(CompletableFuture.supplyAsync(() -> ToolExecutionScopeHolder.withScope(new ToolExecutionScope(configWorkDir(config)), () -> new IndexedRecord(index, executeOne(toolUse, config, sink, scope, parentContext)))));
                 }
                 futures.stream()
                         .map(CompletableFuture::join)
@@ -153,7 +155,7 @@ public final class AgentToolRunner {
                     if (token.isCancellationRequested()) {
                         return records;
                     }
-                    records.add(executeOne(toolUse, config, sink, scope, parentContext));
+                    records.add(ToolExecutionScopeHolder.withScope(new ToolExecutionScope(configWorkDir(config)), () -> executeOne(toolUse, config, sink, scope, parentContext)));
                 }
             }
         }
@@ -367,6 +369,9 @@ public final class AgentToolRunner {
         return new HookExecutionScope(sessionId, turnIndex, workDir);
     }
 
+    private Path configWorkDir(AgentRunConfig config) {
+        return config == null ? Path.of(".") : config.workDir();
+    }
     private void emitHook(HookEventName event, HookContext context, HookExecutionScope scope) {
         hookRuntime.emit(event, context, scope);
     }

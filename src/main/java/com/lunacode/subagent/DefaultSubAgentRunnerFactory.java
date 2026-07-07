@@ -40,6 +40,9 @@ import com.lunacode.tool.DefaultToolPermissionGateway;
 import com.lunacode.tool.ToolBatchPlanner;
 import com.lunacode.tool.ToolExecutor;
 import com.lunacode.tool.ToolRegistry;
+import com.lunacode.worktree.WorktreeManager;
+import com.lunacode.worktree.WorktreeRemoveRequest;
+import com.lunacode.worktree.WorktreeRemoveResult;
 
 import java.nio.file.Path;
 import java.util.Comparator;
@@ -62,6 +65,7 @@ public final class DefaultSubAgentRunnerFactory implements SubAgentRunnerFactory
     private final ToolPolicyResolver toolPolicyResolver;
     private final SubAgentModelResolver modelResolver;
     private final ExecutorService executor;
+    private volatile WorktreeManager worktreeManager;
 
     public DefaultSubAgentRunnerFactory(
             ChatProvider provider,
@@ -102,6 +106,9 @@ public final class DefaultSubAgentRunnerFactory implements SubAgentRunnerFactory
         this.executor = executor == null ? Executors.newCachedThreadPool() : executor;
     }
 
+    public void configureWorktreeManager(WorktreeManager worktreeManager) {
+        this.worktreeManager = worktreeManager;
+    }
     @Override
     public SubAgentRunHandle start(SubAgentLaunchRequest request) {
         Objects.requireNonNull(request, "request");
@@ -124,7 +131,7 @@ public final class DefaultSubAgentRunnerFactory implements SubAgentRunnerFactory
             ProgressingSink sink = new ProgressingSink(progress);
             loop.run(new AgentRequest(request.task(), childConfig), sink, token);
             SubAgentResult result = resultFrom(childConversation, progress, sink.failureReason(), childConfig.maxIterations());
-            completion.complete(result);
+            completion.complete(finalizeWorktree(request, result));
         } catch (RuntimeException e) {
             completion.complete(new SubAgentResult(
                     "子 Agent 执行失败",
@@ -140,6 +147,9 @@ public final class DefaultSubAgentRunnerFactory implements SubAgentRunnerFactory
     private AgentRunConfig childConfig(SubAgentLaunchRequest request) {
         SubAgentParentContext parent = request.parentContext();
         AgentRunConfig parentConfig = parent.parentConfig();
+        if (request.worktree().isPresent()) {
+            parentConfig = parentConfig.withWorkDir(request.worktree().orElseThrow().path());
+        }
         AgentDefinition definition = request.definition().orElse(null);
         boolean background = request.requestedBackground() || request.kind() == SubAgentKind.FORK || parent.parentIsBackground();
         boolean fork = request.kind() == SubAgentKind.FORK;
@@ -205,6 +215,30 @@ public final class DefaultSubAgentRunnerFactory implements SubAgentRunnerFactory
         );
     }
 
+    private SubAgentResult finalizeWorktree(SubAgentLaunchRequest request, SubAgentResult result) {
+        if (request.worktree().isEmpty() || worktreeManager == null) {
+            return result;
+        }
+        var record = request.worktree().orElseThrow();
+        try {
+            WorktreeRemoveResult cleanup = worktreeManager.remove(WorktreeRemoveRequest.automatic(record.name()));
+            if (cleanup.kept()) {
+                return result.withRetainedWorktree(record.path(), record.branchName());
+            }
+            return result;
+        } catch (RuntimeException e) {
+            return new SubAgentResult(
+                    result.summary(),
+                    result.fullResult() + "\n\nWorktree 清理检查失败，已保留目录。\npath: " + record.path() + "\nbranch: " + record.branchName() + "\nreason: " + e.getMessage(),
+                    result.usage(),
+                    result.toolCallCount(),
+                    result.reachedMaxTurns(),
+                    result.failureReason(),
+                    java.util.Optional.of(record.path().toString()),
+                    java.util.Optional.of(record.branchName())
+            );
+        }
+    }
     private SubAgentResult resultFrom(ConversationManager conversation, ProgressTracker progress, Optional<String> sinkFailure, int maxTurns) {
         List<ConversationMessageSnapshot> snapshots = conversation instanceof ConversationCompactionAccess access
                 ? access.fullSnapshot()

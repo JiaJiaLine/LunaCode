@@ -40,7 +40,7 @@ public final class DefaultPermissionEngine {
             }
         }
 
-        PermissionTargetExtractor.ExtractionResult extracted = targetExtractor.extract(toolUse);
+        PermissionTargetExtractor.ExtractionResult extracted = targetExtractor.extract(toolUse, request.workDir());
         if (!extracted.networkErrors().isEmpty()) {
             return PermissionEvaluation.deny(
                     PermissionDecisionLayer.NETWORK,

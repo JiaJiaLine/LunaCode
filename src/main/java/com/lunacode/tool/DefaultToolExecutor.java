@@ -27,7 +27,10 @@ public class DefaultToolExecutor implements ToolExecutor {
             return ToolResult.error(validation.message(), Map.of("errorType", "invalid_arguments", "code", validation.code()));
         }
         try {
-            return tool.execute(context, toolUse.input());
+                        ToolExecutionContext effectiveContext = ToolExecutionScopeHolder.currentWorkDir()
+                    .map(context::withWorkspaceRoot)
+                    .orElse(context);
+            return tool.execute(effectiveContext, toolUse.input());
         } catch (Exception e) {
             return ToolResult.error("工具执行失败: " + e.getMessage(), Map.of("errorType", "execution_error"));
         }

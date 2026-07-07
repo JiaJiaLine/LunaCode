@@ -49,7 +49,7 @@ public final class SlashCommandDispatcher {
             emitCommand(input, "未知命令: " + invocation.rawName());
             return DispatchResult.HANDLED;
         }
-        if (!CANCEL_COMMAND.equals(definition.name()) && isCommandBlocked(runtime)) {
+        if (!CANCEL_COMMAND.equals(definition.name()) && !allowedWhileBusy(definition, invocation) && isCommandBlocked(runtime)) {
             runtime.showWarning("当前忙，请稍后再试。可使用 /cancel 取消当前操作。");
             emitCommand(input, "命令被忙碌状态阻止");
             return DispatchResult.HANDLED;
@@ -64,6 +64,12 @@ public final class SlashCommandDispatcher {
         return DispatchResult.HANDLED;
     }
 
+    private boolean allowedWhileBusy(SlashCommandDefinition definition, SlashCommandInvocation invocation) {
+        if (!"/worktree".equals(definition.name())) {
+            return false;
+        }
+        return "list".equals(invocation.args().strip());
+    }
     private boolean isCommandBlocked(CommandRuntime runtime) {
         return runtime.isBusy()
                 || runtime.hasPendingUserAnswer()

@@ -3,6 +3,7 @@ package com.lunacode.prompt;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.Optional;
 
 public record EnvironmentContext(Path workDir, String osName, Instant now, GitStatusSnapshot gitStatus) {
     public EnvironmentContext {
@@ -13,12 +14,29 @@ public record EnvironmentContext(Path workDir, String osName, Instant now, GitSt
     }
 
     public String render() {
+        String worktreeLine = worktreeSummary()
+                .map(summary -> "Worktree: " + summary + "\n")
+                .orElse("");
         return """
                 # 环境上下文
                 当前工作目录：%s
-                操作系统：%s
+                %s操作系统：%s
                 当前时间：%s
                 Git 状态：%s
-                """.formatted(workDir, osName, now, gitStatus.render()).strip();
+                """.formatted(workDir, worktreeLine, osName, now, gitStatus.render()).strip();
+    }
+
+    private Optional<String> worktreeSummary() {
+        String normalized = workDir.toString().replace('\\', '/');
+        String marker = "/.lunacode/worktrees/";
+        int index = normalized.indexOf(marker);
+        if (index < 0) {
+            return Optional.empty();
+        }
+        String name = normalized.substring(index + marker.length());
+        if (name.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(name + " (所有工具调用默认在该隔离目录执行)");
     }
 }

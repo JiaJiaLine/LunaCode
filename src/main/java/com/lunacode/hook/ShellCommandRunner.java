@@ -4,6 +4,7 @@ import com.lunacode.permission.DangerousCommandBlacklist;
 import com.lunacode.tool.CommandSandbox;
 import com.lunacode.tool.ReadFileTool;
 import com.lunacode.tool.ToolExecutionContext;
+import com.lunacode.tool.ToolExecutionScopeHolder;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -36,6 +37,9 @@ public final class ShellCommandRunner {
         ToolExecutionContext safeContext = context == null
                 ? new ToolExecutionContext(java.nio.file.Path.of("."), Duration.ofSeconds(30), 20_000, null)
                 : context;
+        safeContext = ToolExecutionScopeHolder.currentWorkDir()
+                .map(safeContext::withWorkspaceRoot)
+                .orElse(safeContext);
         Duration effectiveTimeout = timeout == null ? safeContext.commandTimeout() : timeout;
         long started = System.nanoTime();
         Process process = null;

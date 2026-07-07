@@ -79,6 +79,9 @@ import com.lunacode.tool.DefaultToolRegistry;
 import com.lunacode.tool.ToolBatchPlanner;
 import com.lunacode.tool.ToolExecutor;
 import com.lunacode.tool.ToolRegistry;
+import com.lunacode.worktree.DefaultWorktreeCommandHandler;
+import com.lunacode.worktree.WorktreeCommandHandler;
+import com.lunacode.worktree.WorktreeManager;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -134,6 +137,8 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private volatile PermissionMode permissionModeBeforePlan;
     private volatile boolean planPermissionManuallyChanged;
     private volatile ForegroundSubAgentTracker foregroundSubAgentTracker;
+    private volatile WorktreeManager worktreeManager;
+    private volatile WorktreeCommandHandler worktreeCommandHandler;
 
     public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, Runnable onChange) {
         this(conversationManager, provider, config, new DefaultToolRegistry(), null, onChange, newAgentExecutor());
@@ -335,7 +340,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.commandDispatcher = commands.dispatcher();
         this.commandCompleter = commands.completer();
         this.contextManager = DefaultContextManager.createDefault(workspaceRoot, config.context(), new com.lunacode.tool.SensitiveValueMasker(java.util.List.of(config.apiKey())), this.hookRuntime, this::currentSessionId);
-        this.lastPlanFile = resolvePlanFile(workspaceRoot);
+        this.lastPlanFile = resolvePlanFile(effectiveWorkDir());
         this.permissionModeSession = new PermissionModeSession(config.permissions().mode());
         this.permissionModeBeforePlan = this.permissionModeSession.currentMode();
         this.permissionRuleStore = new YamlPermissionRuleStore(workspaceRoot);
@@ -349,7 +354,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private CommandBundle defaultCommandBundle() {
         SlashCommandRegistry registry = new SlashCommandRegistry();
         BuiltinSlashCommands.registerAll(registry);
-        return new CommandBundle(registry, new SlashCommandDispatcher(registry, new SlashCommandParser(), hookRuntime, this::currentSessionId, () -> workspaceRoot), new SlashCommandCompleter(registry));
+        return new CommandBundle(registry, new SlashCommandDispatcher(registry, new SlashCommandParser(), hookRuntime, this::currentSessionId, this::effectiveWorkDir), new SlashCommandCompleter(registry));
     }
 
     private static ExecutorService newAgentExecutor() {
@@ -426,6 +431,10 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         }
     }
 
+    public void configureWorktrees(WorktreeManager manager, WorktreeCommandHandler handler) {
+        this.worktreeManager = manager;
+        this.worktreeCommandHandler = handler == null && manager != null ? new DefaultWorktreeCommandHandler(manager) : handler;
+    }
     public void configureSkills(SkillCatalog catalog, SkillInvocationPlanner planner, SkillForkRunner forkRunner) {
         this.skillCatalog = catalog;
         this.skillInvocationPlanner = planner;
@@ -670,7 +679,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         }
         agentMode = AgentMode.PLAN;
         planPermissionManuallyChanged = false;
-        lastPlanFile = resolvePlanFile(workspaceRoot);
+        lastPlanFile = resolvePlanFile(effectiveWorkDir());
         permissionModeSession.setCurrentMode(PermissionMode.PLAN);
         setStatus("idle", "已进入计划模式");
     }
@@ -717,6 +726,18 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             return;
         }
         MemoryCommandHandler.CommandResult result = memoryCommandHandler.handle(rawInput);
+        setStatus(result.state(), result.message());
+    }
+
+    @Override
+    public void runWorktreeCommand(String rawInput) {
+        WorktreeCommandHandler handler = worktreeCommandHandler;
+        if (handler == null) {
+            setStatus("error", "当前未启用 Worktree 命令");
+            return;
+        }
+        boolean busy = isBusy() || hasPendingPermissionAnswer() || hasPendingUserAnswer() || hasPendingDangerousModeConfirmation();
+        WorktreeCommandHandler.CommandResult result = handler.handle(rawInput, busy);
         setStatus(result.state(), result.message());
     }
     @Override
@@ -823,9 +844,14 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     }
 
     private AgentRunConfig runConfig(AgentMode mode) {
-        return new AgentRunConfig(workspaceRoot, mode, permissionModeSession.modeFor(mode), lastPlanFile, config.agent().maxIterations(), config.agent().maxConsecutiveUnknownTools(), Clock.systemDefaultZone());
+        Path workDir = effectiveWorkDir();
+        return new AgentRunConfig(workDir, mode, permissionModeSession.modeFor(mode), resolvePlanFile(workDir), config.agent().maxIterations(), config.agent().maxConsecutiveUnknownTools(), Clock.systemDefaultZone());
     }
 
+    private Path effectiveWorkDir() {
+        WorktreeManager manager = worktreeManager;
+        return manager == null ? workspaceRoot : manager.effectiveWorkDir();
+    }
     private Path resolvePlanFile(Path root) {
         Path configured = config.agent().planFile();
         return configured.isAbsolute() ? configured.toAbsolutePath().normalize() : root.resolve(configured).normalize();

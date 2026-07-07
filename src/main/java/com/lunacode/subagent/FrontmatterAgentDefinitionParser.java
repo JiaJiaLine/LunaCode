@@ -34,6 +34,7 @@ public final class FrontmatterAgentDefinitionParser implements AgentDefinitionPa
                     optionalText(root, "model").orElse("inherit"),
                     parseMaxTurns(root.path("maxTurns")),
                     parsePermissionMode(root.path("permissionMode")),
+                    parseIsolation(root.path("isolation")),
                     parseBoolean(root.path("background"), "background"),
                     frontmatter.body(),
                     candidate.path().orElse(java.nio.file.Path.of(candidate.sourceId().isBlank() ? name + ".md" : candidate.sourceId())),
@@ -121,6 +122,15 @@ public final class FrontmatterAgentDefinitionParser implements AgentDefinitionPa
         return OptionalInt.of(value);
     }
 
+    private AgentIsolation parseIsolation(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return AgentIsolation.NONE;
+        }
+        if (!node.isTextual()) {
+            throw new IllegalArgumentException("isolation 必须是字符串");
+        }
+        return AgentIsolation.fromFrontmatter(node.asText());
+    }
     private boolean parseBoolean(JsonNode node, String field) {
         if (node == null || node.isMissingNode() || node.isNull()) {
             return false;

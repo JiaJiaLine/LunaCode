@@ -40,7 +40,8 @@ public final class DefaultToolPermissionGateway implements ToolPermissionGateway
                 tool,
                 config.mode(),
                 config.permissionMode(),
-                config.planFile()
+                config.planFile(),
+                config.workDir()
         ));
     }
 
