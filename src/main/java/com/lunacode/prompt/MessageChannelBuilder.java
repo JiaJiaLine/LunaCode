@@ -59,6 +59,12 @@ public final class MessageChannelBuilder {
             SkillPromptContext skillContext
     ) {
         List<SystemReminder> reminders = new ArrayList<>(reminderBuilder.build(state, deferredTools));
+        if (state != null && config != null && config.coordinatorModeState().enabled()) {
+            reminders.add(new SystemReminder(SystemReminderKind.TEMPORARY_CONSTRAINT, config.coordinatorModeState().systemPrompt(), state.turnIndex()));
+        }
+        if (state != null && config != null && config.teamRuntimeContext().active()) {
+            reminders.add(new SystemReminder(SystemReminderKind.TEMPORARY_CONSTRAINT, teamReminder(config), state.turnIndex()));
+        }
         if (hookReminderStore != null && state != null) {
             reminders.addAll(hookReminderStore.drain(sessionIdSupplier.get(), state.turnIndex()));
         }
@@ -70,5 +76,11 @@ public final class MessageChannelBuilder {
                 reminders,
                 history
         );
+    }
+
+    private String teamReminder(AgentRunConfig config) {
+        var team = config.teamRuntimeContext();
+        String identity = team.memberName().map(name -> "member `" + name + "`").orElse("Lead");
+        return "Team context is active. You are " + identity + " in team `" + team.teamName() + "`. Use shared tasks and SendMessage for coordination; keep code changes in your assigned worktree when one is active.";
     }
 }

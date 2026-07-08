@@ -46,12 +46,12 @@ public class ConfigLoader {
         try {
             raw = mapper.readValue(path.toFile(), RawConfig.class);
         } catch (IOException e) {
-            throw new ConfigException("读取配置文件失败: " + path, e);
+            throw new ConfigException("无法读取配置文件: " + path, e);
         }
 
         String protocol = requireText(raw.protocol(), "protocol").toLowerCase();
         if (!protocol.equals("openai") && !protocol.equals("anthropic")) {
-            throw new ConfigException("protocol 只能是 openai 或 anthropic");
+            throw new ConfigException("protocol 只支持 openai 或 anthropic");
         }
 
         String model = requireText(raw.model(), "model");
@@ -64,7 +64,8 @@ public class ConfigLoader {
         McpConfig mcp = toMergedMcpConfig(readUserMcp(path), raw.mcp());
         ContextConfig context = toContextConfig(raw.context());
         MemoryConfig memory = toMemoryConfig(raw.memory());
-        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp, context, memory);
+        FeatureConfig features = FeatureConfig.fromMap(raw.features());
+        return new ProviderConfig(protocol, model, baseUrl, apiKey, thinking, agent, permissions, sandbox, mcp, context, memory, features);
     }
 
     private RawMcp readUserMcp(Path projectConfigPath) {
@@ -80,7 +81,7 @@ public class ConfigLoader {
             RawConfig raw = mapper.readValue(normalizedUserPath.toFile(), RawConfig.class);
             return raw.mcp();
         } catch (IOException e) {
-            throw new ConfigException("读取用户级 MCP 配置失败: " + normalizedUserPath, e);
+            throw new ConfigException("无法读取用户级 MCP 配置: " + normalizedUserPath, e);
         }
     }
 
@@ -95,7 +96,7 @@ public class ConfigLoader {
         try {
             URI uri = new URI(value);
             if (uri.getScheme() == null || uri.getHost() == null) {
-                throw new ConfigException("base_url 必须是有效 URL");
+                throw new ConfigException("base_url 必须是完整 URL");
             }
             return uri;
         } catch (URISyntaxException e) {
@@ -107,7 +108,7 @@ public class ConfigLoader {
         try {
             URI uri = new URI(value);
             if (uri.getScheme() == null) {
-                throw new McpServerParseException("url 必须是有效 URL");
+                throw new McpServerParseException("url 必须是完整 URL");
             }
             return uri;
         } catch (URISyntaxException e) {
@@ -138,39 +139,15 @@ public class ConfigLoader {
     private AgentConfig toAgentConfig(RawAgent raw, Boolean topLevelEnableVerificationAgent, Boolean topLevelEnableVerificationAgentSnake) {
         AgentConfig defaults = AgentConfig.defaults();
         if (raw == null) {
-            boolean enableVerificationAgent = firstNonNull(
-                    topLevelEnableVerificationAgent,
-                    topLevelEnableVerificationAgentSnake,
-                    defaults.enableVerificationAgent()
-            );
-            return new AgentConfig(
-                    defaults.maxIterations(),
-                    defaults.maxConsecutiveUnknownTools(),
-                    defaults.planFile(),
-                    defaults.autoBackgroundMs(),
-                    defaults.modelAliases(),
-                    enableVerificationAgent
-            );
+            boolean enableVerificationAgent = firstNonNull(topLevelEnableVerificationAgent, topLevelEnableVerificationAgentSnake, defaults.enableVerificationAgent());
+            return new AgentConfig(defaults.maxIterations(), defaults.maxConsecutiveUnknownTools(), defaults.planFile(), defaults.autoBackgroundMs(), defaults.modelAliases(), enableVerificationAgent);
         }
         int maxIterations = raw.maxIterations() == null ? defaults.maxIterations() : raw.maxIterations();
-        int maxUnknownTools = raw.maxConsecutiveUnknownTools() == null
-                ? defaults.maxConsecutiveUnknownTools()
-                : raw.maxConsecutiveUnknownTools();
-        Path planFile = raw.planFile() == null || raw.planFile().isBlank()
-                ? defaults.planFile()
-                : Path.of(raw.planFile().trim());
-        long autoBackgroundMs = raw.autoBackgroundMs() == null
-                ? defaults.autoBackgroundMs()
-                : raw.autoBackgroundMs();
-        Map<String, String> modelAliases = raw.modelAliases() == null
-                ? defaults.modelAliases()
-                : sanitizeStringMap(raw.modelAliases(), "agent.model_aliases");
-        boolean enableVerificationAgent = firstNonNull(
-                raw.enableVerificationAgent(),
-                topLevelEnableVerificationAgent,
-                topLevelEnableVerificationAgentSnake,
-                defaults.enableVerificationAgent()
-        );
+        int maxUnknownTools = raw.maxConsecutiveUnknownTools() == null ? defaults.maxConsecutiveUnknownTools() : raw.maxConsecutiveUnknownTools();
+        Path planFile = raw.planFile() == null || raw.planFile().isBlank() ? defaults.planFile() : Path.of(raw.planFile().trim());
+        long autoBackgroundMs = raw.autoBackgroundMs() == null ? defaults.autoBackgroundMs() : raw.autoBackgroundMs();
+        Map<String, String> modelAliases = raw.modelAliases() == null ? defaults.modelAliases() : sanitizeStringMap(raw.modelAliases(), "agent.model_aliases");
+        boolean enableVerificationAgent = firstNonNull(raw.enableVerificationAgent(), topLevelEnableVerificationAgent, topLevelEnableVerificationAgentSnake, defaults.enableVerificationAgent());
         return new AgentConfig(maxIterations, maxUnknownTools, planFile, autoBackgroundMs, modelAliases, enableVerificationAgent);
     }
 
@@ -216,9 +193,7 @@ public class ConfigLoader {
                 raw.maxAutoSummaryFailures() == null ? defaults.maxAutoSummaryFailures() : raw.maxAutoSummaryFailures(),
                 raw.promptTooLongGroupRetries() == null ? defaults.promptTooLongGroupRetries() : raw.promptTooLongGroupRetries(),
                 raw.promptTooLongDropFraction() == null ? defaults.promptTooLongDropFraction() : raw.promptTooLongDropFraction(),
-                raw.sessionRoot() == null || raw.sessionRoot().isBlank()
-                        ? defaults.sessionRoot()
-                        : Path.of(raw.sessionRoot().trim())
+                raw.sessionRoot() == null || raw.sessionRoot().isBlank() ? defaults.sessionRoot() : Path.of(raw.sessionRoot().trim())
         );
     }
 
@@ -238,13 +213,7 @@ public class ConfigLoader {
         return new McpConfig(servers, warnings);
     }
 
-    private void parseMcpServers(
-            String source,
-            RawMcp rawMcp,
-            LinkedHashMap<String, McpServerConfig> servers,
-            List<String> warnings,
-            boolean projectOverrides
-    ) {
+    private void parseMcpServers(String source, RawMcp rawMcp, LinkedHashMap<String, McpServerConfig> servers, List<String> warnings, boolean projectOverrides) {
         if (rawMcp == null || rawMcp.servers() == null || rawMcp.servers().isEmpty()) {
             return;
         }
@@ -266,17 +235,14 @@ public class ConfigLoader {
             throw new McpServerParseException("Server 名不能为空");
         }
         if (raw == null) {
-            throw new McpServerParseException("配置不能为空");
+            throw new McpServerParseException("配置为空");
         }
         boolean hasCommand = hasText(raw.command());
         boolean hasUrl = hasText(raw.url());
         if (hasCommand == hasUrl) {
-            throw new McpServerParseException("必须且只能配置 command 或 url");
+            throw new McpServerParseException("必须且只能声明 command 或 url");
         }
-        if (hasCommand) {
-            return parseStdioServer(serverName, raw);
-        }
-        return parseHttpServer(serverName, raw);
+        return hasCommand ? parseStdioServer(serverName, raw) : parseHttpServer(serverName, raw);
     }
 
     private McpStdioServerConfig parseStdioServer(String serverName, RawMcpServer raw) {
@@ -284,9 +250,7 @@ public class ConfigLoader {
         if (!hasText(command)) {
             throw new McpServerParseException("command 展开后为空");
         }
-        List<String> args = raw.args() == null ? List.of() : raw.args().stream()
-                .map(value -> expandMcpValue("args", value))
-                .toList();
+        List<String> args = raw.args() == null ? List.of() : raw.args().stream().map(value -> expandMcpValue("args", value)).toList();
         LinkedHashMap<String, String> env = new LinkedHashMap<>();
         LinkedHashMap<String, String> sensitive = new LinkedHashMap<>();
         if (raw.env() != null) {
@@ -335,20 +299,20 @@ public class ConfigLoader {
         try {
             return environmentValueExpander.expand(value);
         } catch (EnvironmentValueExpander.MissingEnvironmentValueException e) {
-            throw new McpServerParseException(field + " " + e.getMessage());
+            throw new McpServerParseException(field + " 引用的" + e.getMessage());
         }
     }
 
     private String requireMcpMapKey(String key, String field) {
         if (key == null || key.isBlank()) {
-            throw new McpServerParseException(field + " 不能包含空 key");
+            throw new McpServerParseException(field + " 中存在空 key");
         }
         return key.strip();
     }
 
     private String safeServerName(String name) {
         if (name == null || name.isBlank()) {
-            return "<空名称>";
+            return "<未命名>";
         }
         String oneLine = name.replaceAll("\\s+", " ").strip();
         return oneLine.length() <= 80 ? oneLine : oneLine.substring(0, 80) + "...";
@@ -398,13 +362,11 @@ public class ConfigLoader {
             RawSandbox sandbox,
             RawMcp mcp,
             RawContext context,
-            RawMemory memory
+            RawMemory memory,
+            Map<String, Boolean> features
     ) {}
 
-    private record RawThinking(
-            boolean enabled,
-            @JsonProperty("budget_tokens") Integer budgetTokens
-    ) {}
+    private record RawThinking(boolean enabled, @JsonProperty("budget_tokens") Integer budgetTokens) {}
 
     private record RawAgent(
             @JsonProperty("max_iterations") Integer maxIterations,
@@ -415,19 +377,11 @@ public class ConfigLoader {
             @JsonProperty("enable_verification_agent") Boolean enableVerificationAgent
     ) {}
 
-    private record RawPermissions(
-            String mode
-    ) {}
+    private record RawPermissions(String mode) {}
 
-    private record RawSandbox(
-            @JsonProperty("network_enabled") Boolean networkEnabled,
-            @JsonProperty("extra_roots") List<RawSandboxRoot> extraRoots
-    ) {}
+    private record RawSandbox(@JsonProperty("network_enabled") Boolean networkEnabled, @JsonProperty("extra_roots") List<RawSandboxRoot> extraRoots) {}
 
-    private record RawSandboxRoot(
-            String name,
-            String path
-    ) {}
+    private record RawSandboxRoot(String name, String path) {}
 
     private record RawContext(
             @JsonProperty("context_window_tokens") Long contextWindowTokens,
@@ -447,21 +401,11 @@ public class ConfigLoader {
             @JsonProperty("session_root") String sessionRoot
     ) {}
 
-    private record RawMemory(
-            @JsonProperty("auto_update") Boolean autoUpdate
-    ) {}
+    private record RawMemory(@JsonProperty("auto_update") Boolean autoUpdate) {}
 
-    private record RawMcp(
-            Map<String, RawMcpServer> servers
-    ) {}
+    private record RawMcp(Map<String, RawMcpServer> servers) {}
 
-    private record RawMcpServer(
-            String command,
-            List<String> args,
-            Map<String, String> env,
-            String url,
-            Map<String, String> headers
-    ) {}
+    private record RawMcpServer(String command, List<String> args, Map<String, String> env, String url, Map<String, String> headers) {}
 
     private static class McpServerParseException extends RuntimeException {
         private McpServerParseException(String message) {

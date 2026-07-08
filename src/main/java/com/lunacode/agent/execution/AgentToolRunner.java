@@ -20,6 +20,7 @@ import com.lunacode.runtime.AgentRunConfig;
 import com.lunacode.runtime.CancellationToken;
 import com.lunacode.subagent.AgentExecutionContextHolder;
 import com.lunacode.subagent.SubAgentParentContext;
+import com.lunacode.team.TeamRuntimeRole;
 import com.lunacode.tool.Tool;
 import com.lunacode.tool.ToolBatch;
 import com.lunacode.tool.ToolBatchPlanner;
@@ -41,6 +42,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
@@ -184,6 +186,9 @@ public final class AgentToolRunner {
         if (tool == null) {
             result = ToolResult.error("工具不存在或已禁用: " + toolUse.name(), Map.of("errorType", "tool_not_found"));
         } else {
+            if (planApprovalBlocked(config, toolUse, tool)) {
+                result = ToolResult.error("Team member must wait for Lead plan approval before using modifying tools", Map.of("errorType", "plan_approval_required"));
+            } else {
             Optional<HookRejection> rejection = hookRuntime.runPreToolHooks(hookContext(HookEventName.PRE_TOOL_USE, toolUse, null, ""), scope);
             if (rejection.isPresent()) {
                 result = hookRejected(toolUse, rejection.get());
@@ -208,6 +213,7 @@ public final class AgentToolRunner {
                     };
                 }
             }
+            }
         }
         Duration duration = Duration.ofNanos(System.nanoTime() - started);
         ToolExecutionRecord record = new ToolExecutionRecord(toolUse, result, duration);
@@ -216,6 +222,20 @@ public final class AgentToolRunner {
         return record;
     }
 
+
+    private boolean planApprovalBlocked(AgentRunConfig config, ToolUse toolUse, Tool tool) {
+        if (config == null || config.teamRuntimeContext().role() != TeamRuntimeRole.MEMBER) {
+            return false;
+        }
+        if (!config.teamRuntimeContext().planModeRequired() || config.teamRuntimeContext().planApproved()) {
+            return false;
+        }
+        String name = toolUse == null ? "" : toolUse.name();
+        if (Set.of("TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "SendMessage", "ReadFile", "Glob", "Grep").contains(name)) {
+            return false;
+        }
+        return tool != null && !tool.isReadOnly();
+    }
     private ToolResult hookRejected(ToolUse toolUse, HookRejection rejection) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("errorType", "hook_rejected");

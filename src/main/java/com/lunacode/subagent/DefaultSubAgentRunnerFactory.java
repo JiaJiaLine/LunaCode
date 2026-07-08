@@ -34,6 +34,8 @@ import com.lunacode.permission.YamlPermissionRuleStore;
 import com.lunacode.prompt.PromptContextBuilder;
 import com.lunacode.provider.ChatProvider;
 import com.lunacode.runtime.AgentRunConfig;
+import com.lunacode.coordinator.CoordinatorModeState;
+import com.lunacode.team.tool.TeamToolPolicyResolver;
 import com.lunacode.runtime.CancellationToken;
 import com.lunacode.skill.ToolAccessPolicy;
 import com.lunacode.tool.DefaultToolPermissionGateway;
@@ -46,9 +48,11 @@ import com.lunacode.worktree.WorktreeRemoveResult;
 
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -64,6 +68,7 @@ public final class DefaultSubAgentRunnerFactory implements SubAgentRunnerFactory
     private final Supplier<String> sessionIdSupplier;
     private final ToolPolicyResolver toolPolicyResolver;
     private final SubAgentModelResolver modelResolver;
+    private final TeamToolPolicyResolver teamToolPolicyResolver = new TeamToolPolicyResolver();
     private final ExecutorService executor;
     private volatile WorktreeManager worktreeManager;
 
@@ -154,6 +159,10 @@ public final class DefaultSubAgentRunnerFactory implements SubAgentRunnerFactory
         boolean background = request.requestedBackground() || request.kind() == SubAgentKind.FORK || parent.parentIsBackground();
         boolean fork = request.kind() == SubAgentKind.FORK;
         ToolAccessPolicy toolPolicy = toolPolicyResolver.resolve(parentConfig.toolAccessPolicy(), definition, background, fork);
+        toolPolicy = teamToolPolicyResolver.resolve(toolPolicy, request.teamRuntimeContext(), CoordinatorModeState.disabled());
+        if (!request.teamRuntimeContext().active()) {
+            toolPolicy = denyTool(toolPolicy, "TeamCreate");
+        }
         AgentRunConfig child = parentConfig
                 .withToolAccessPolicy(toolPolicy)
                 .withModelOverride(definition == null ? parentConfig.modelOverride() : modelResolver.resolve(definition, parentConfig))
@@ -168,6 +177,12 @@ public final class DefaultSubAgentRunnerFactory implements SubAgentRunnerFactory
             }
         }
         return child;
+    }
+
+    private ToolAccessPolicy denyTool(ToolAccessPolicy policy, String toolName) {
+        Set<String> denied = new LinkedHashSet<>(policy.deniedTools());
+        denied.add(toolName);
+        return policy.withDeniedTools(denied);
     }
 
     private void copyParentHistory(SubAgentLaunchRequest request, ConversationManager childConversation) {

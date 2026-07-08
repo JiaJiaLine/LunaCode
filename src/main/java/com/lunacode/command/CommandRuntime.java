@@ -47,4 +47,8 @@ public interface CommandRuntime {
     default void runWorktreeCommand(String rawInput) {
         showError("当前未启用 Worktree 命令");
     }
+
+    default void runTeamCommand(String rawInput) {
+        showError("当前未启用 Team 命令");
+    }
 }

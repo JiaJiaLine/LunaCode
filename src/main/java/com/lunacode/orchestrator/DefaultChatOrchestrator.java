@@ -23,7 +23,10 @@ import com.lunacode.command.SlashCommandDispatcher;
 import com.lunacode.command.SlashCommandParser;
 import com.lunacode.command.SlashCommandRegistry;
 import com.lunacode.command.SkillCommandRegistrar;
+import com.lunacode.command.TeamCommandHandler;
 import com.lunacode.config.ProviderConfig;
+import com.lunacode.coordinator.CoordinatorModeResolver;
+import com.lunacode.coordinator.CoordinatorModeState;
 import com.lunacode.context.CompactTrigger;
 import com.lunacode.context.ContextManager;
 import com.lunacode.context.ContextPreparationRequest;
@@ -73,7 +76,11 @@ import com.lunacode.skill.SkillInvocationPlan;
 import com.lunacode.skill.SkillInvocationPlanner;
 import com.lunacode.skill.SkillInvocationRequest;
 import com.lunacode.skill.SkillPromptContext;
+import com.lunacode.skill.ToolAccessPolicy;
 import com.lunacode.session.SessionCommandHandler;
+import com.lunacode.team.TeamManager;
+import com.lunacode.team.TeamRuntimeContext;
+import com.lunacode.team.tool.TeamToolPolicyResolver;
 import com.lunacode.tool.DefaultToolPermissionGateway;
 import com.lunacode.tool.DefaultToolRegistry;
 import com.lunacode.tool.ToolBatchPlanner;
@@ -139,6 +146,10 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private volatile ForegroundSubAgentTracker foregroundSubAgentTracker;
     private volatile WorktreeManager worktreeManager;
     private volatile WorktreeCommandHandler worktreeCommandHandler;
+    private volatile TeamManager teamManager;
+    private volatile TeamCommandHandler teamCommandHandler;
+    private volatile CoordinatorModeResolver coordinatorModeResolver;
+    private final TeamToolPolicyResolver teamToolPolicyResolver = new TeamToolPolicyResolver();
 
     public DefaultChatOrchestrator(ConversationManager conversationManager, ChatProvider provider, ProviderConfig config, Runnable onChange) {
         this(conversationManager, provider, config, new DefaultToolRegistry(), null, onChange, newAgentExecutor());
@@ -435,6 +446,12 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         this.worktreeManager = manager;
         this.worktreeCommandHandler = handler == null && manager != null ? new DefaultWorktreeCommandHandler(manager) : handler;
     }
+
+    public void configureTeams(TeamManager manager, TeamCommandHandler handler, CoordinatorModeResolver coordinatorModeResolver) {
+        this.teamManager = manager;
+        this.teamCommandHandler = handler;
+        this.coordinatorModeResolver = coordinatorModeResolver;
+    }
     public void configureSkills(SkillCatalog catalog, SkillInvocationPlanner planner, SkillForkRunner forkRunner) {
         this.skillCatalog = catalog;
         this.skillInvocationPlanner = planner;
@@ -512,10 +529,11 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
                 plan.renderedPrompt(),
                 plan.definition().resourceRoot()
         );
-        return runConfig(agentMode)
-                .withToolAccessPolicy(plan.toolAccessPolicy())
+        AgentRunConfig base = runConfig(agentMode)
                 .withModelOverride(plan.modelOverride())
                 .withSkillPromptContext(new SkillPromptContext(List.of(), Optional.of(loadedSkill)));
+        ToolAccessPolicy policy = teamToolPolicyResolver.resolve(plan.toolAccessPolicy(), base.teamRuntimeContext(), base.coordinatorModeState());
+        return base.withToolAccessPolicy(policy);
     }
 
     private String visibleSkillRequest(SkillInvocationRequest request) {
@@ -740,6 +758,18 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         WorktreeCommandHandler.CommandResult result = handler.handle(rawInput, busy);
         setStatus(result.state(), result.message());
     }
+
+    @Override
+    public void runTeamCommand(String rawInput) {
+        TeamCommandHandler handler = teamCommandHandler;
+        if (handler == null) {
+            setStatus("error", "当前未启用 Team 命令");
+            return;
+        }
+        boolean busy = isBusy() || hasPendingPermissionAnswer() || hasPendingUserAnswer() || hasPendingDangerousModeConfirmation();
+        TeamCommandHandler.CommandResult result = handler.handle(rawInput, busy);
+        setStatus(result.state(), result.message());
+    }
     @Override
     public StatusSnapshot status() {
         StatusSnapshot snapshot = enrich(status.get());
@@ -845,7 +875,23 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
 
     private AgentRunConfig runConfig(AgentMode mode) {
         Path workDir = effectiveWorkDir();
-        return new AgentRunConfig(workDir, mode, permissionModeSession.modeFor(mode), resolvePlanFile(workDir), config.agent().maxIterations(), config.agent().maxConsecutiveUnknownTools(), Clock.systemDefaultZone());
+        AgentRunConfig base = new AgentRunConfig(workDir, mode, permissionModeSession.modeFor(mode), resolvePlanFile(workDir), config.agent().maxIterations(), config.agent().maxConsecutiveUnknownTools(), Clock.systemDefaultZone());
+        CoordinatorModeState coordinatorState = coordinatorModeResolver == null ? CoordinatorModeState.disabled() : coordinatorModeResolver.resolve();
+        TeamRuntimeContext teamContext = currentTeamContext();
+        ToolAccessPolicy policy = teamToolPolicyResolver.resolve(base.toolAccessPolicy(), teamContext, coordinatorState);
+        return base.withTeamRuntimeContext(teamContext).withCoordinatorModeState(coordinatorState).withToolAccessPolicy(policy);
+    }
+
+    private TeamRuntimeContext currentTeamContext() {
+        TeamManager manager = teamManager;
+        if (manager == null) {
+            return TeamRuntimeContext.none();
+        }
+        try {
+            return manager.currentTeam().map(team -> TeamRuntimeContext.lead(team.name())).orElse(TeamRuntimeContext.none());
+        } catch (RuntimeException e) {
+            return TeamRuntimeContext.none();
+        }
     }
 
     private Path effectiveWorkDir() {

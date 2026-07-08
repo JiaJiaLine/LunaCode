@@ -24,20 +24,23 @@ public final class AgentTool implements Tool {
     public AgentTool(Supplier<SubAgentService> subAgentServiceSupplier) {
         this.subAgentServiceSupplier = subAgentServiceSupplier;
         ObjectNode properties = MAPPER.createObjectNode();
-        properties.set("task", MAPPER.createObjectNode()
-                .put("type", "string")
-                .put("description", "要交给子 Agent 执行的任务描述"));
-        properties.set("subagent_type", MAPPER.createObjectNode()
-                .put("type", "string")
-                .put("description", "可选。指定时启动定义式子 Agent；不指定时启动 Fork 式子 Agent"));
-        properties.set("run_in_background", MAPPER.createObjectNode()
-                .put("type", "boolean")
-                .put("description", "可选。为 true 时直接以后台任务启动"));
+        properties.set("task", text("Task to delegate to the sub agent or teammate."));
+        properties.set("subagent_type", text("Optional. Defined agent type; when omitted the service may fork or use general-purpose according to feature flags."));
+        properties.set("run_in_background", MAPPER.createObjectNode().put("type", "boolean").put("description", "Optional. Launch directly as a background task."));
+        properties.set("name", text("Optional teammate name. When present inside a team, name is registered to the spawned agent id."));
+        properties.set("team", text("Optional team name. Defaults to the current team."));
+        properties.set("role", text("Optional teammate role label."));
+        properties.set("backend", text("Optional backend: same_process or terminal."));
+        properties.set("planModeRequired", MAPPER.createObjectNode().put("type", "boolean").put("description", "Require Lead approval before this teammate modifies files."));
         ObjectNode root = MAPPER.createObjectNode();
         root.put("type", "object");
         root.set("properties", properties);
         root.set("required", MAPPER.createArrayNode().add("task"));
         this.schema = root;
+    }
+
+    private ObjectNode text(String description) {
+        return MAPPER.createObjectNode().put("type", "string").put("description", description);
     }
 
     @Override
@@ -47,7 +50,7 @@ public final class AgentTool implements Tool {
 
     @Override
     public String description() {
-        return "把任务委派给独立子 Agent。指定 subagent_type 时使用预定义角色；不指定时 Fork 当前对话并后台运行。";
+        return "Delegate a task to an independent sub agent. Inside a team, provide name to spawn a named teammate and register it for SendMessage routing.";
     }
 
     @Override
@@ -59,15 +62,28 @@ public final class AgentTool implements Tool {
     public ToolResult execute(ToolExecutionContext context, JsonNode input) {
         SubAgentService subAgentService = subAgentServiceSupplier == null ? null : subAgentServiceSupplier.get();
         if (subAgentService == null) {
-            return ToolResult.error("Agent 工具尚未完成初始化", Map.of("errorType", "agent_tool_not_ready"));
+            return ToolResult.error("Agent tool is not initialized", Map.of("errorType", "agent_tool_not_ready"));
         }
         SubAgentParentContext parentContext = AgentExecutionContextHolder.current();
         AgentToolRequest request = new AgentToolRequest(
                 input == null ? "" : input.path("task").asText(""),
                 input != null && input.hasNonNull("subagent_type") ? Optional.of(input.path("subagent_type").asText("")) : Optional.empty(),
-                input != null && input.path("run_in_background").asBoolean(false)
+                input != null && input.path("run_in_background").asBoolean(false),
+                optional(input, "name"),
+                optional(input, "team"),
+                optional(input, "role"),
+                optional(input, "backend"),
+                input != null && input.path("planModeRequired").asBoolean(false)
         );
         return subAgentService.launchFromTool(request, parentContext);
+    }
+
+    private Optional<String> optional(JsonNode input, String field) {
+        if (input == null || !input.hasNonNull(field)) {
+            return Optional.empty();
+        }
+        String value = input.path(field).asText("").strip();
+        return value.isBlank() ? Optional.empty() : Optional.of(value);
     }
 
     @Override
@@ -93,10 +109,13 @@ public final class AgentTool implements Tool {
     @Override
     public ValidationError validateInput(JsonNode input) {
         if (input == null || !input.hasNonNull("task") || input.path("task").asText().isBlank()) {
-            return new ValidationError("missing_task", "Agent 需要 task 参数");
+            return new ValidationError("missing_task", "Agent requires task");
         }
         if (input.has("subagent_type") && !input.path("subagent_type").isTextual()) {
-            return new ValidationError("invalid_subagent_type", "subagent_type 必须是字符串");
+            return new ValidationError("invalid_subagent_type", "subagent_type must be a string");
+        }
+        if (input.has("name") && !input.path("name").isTextual()) {
+            return new ValidationError("invalid_name", "name must be a string");
         }
         return null;
     }

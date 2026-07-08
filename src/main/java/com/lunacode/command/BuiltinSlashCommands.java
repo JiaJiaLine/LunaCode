@@ -16,6 +16,8 @@ public final class BuiltinSlashCommands {
         registry.register(command("/do", List.of("/d"), "回到执行模式", "/do", SlashCommandType.UI_STATE, "", false, context -> context.runtime().enterDefaultMode()));
         registry.register(command("/session", List.of("/sess"), "管理会话", "/session [current|list|resume <id>|new]", SlashCommandType.LOCAL, "[current|list|resume <id>|new]", false, context -> context.runtime().runSessionCommand(canonicalRaw("/session", context.args()))));
         registry.register(command("/worktree", List.of("/wt"), "管理 Git Worktree 隔离目录", "/worktree [create|list|enter|exit|remove]", SlashCommandType.LOCAL, "[create|list|enter|exit|remove]", false, context -> context.runtime().runWorktreeCommand(canonicalRaw("/worktree", context.args()))));
+        registry.register(command("/team", List.of("/tm"), "管理 Agent Team", "/team [create|use|list|delete|member]", SlashCommandType.LOCAL, "[create|use|list|delete|member]", false, context -> context.runtime().runTeamCommand(canonicalRaw("/team", context.args()))));
+
         registry.register(command("/memory", List.of("/mem"), "管理记忆", "/memory [list|delete <id>|on|off]", SlashCommandType.LOCAL, "[list|delete <id>|on|off]", false, context -> context.runtime().runMemoryCommand(canonicalRaw("/memory", context.args()))));
         registry.register(command("/permission", List.of("/perm", "/permissions"), "查看或切换权限模式", "/permission [default|acceptEdits|plan|bypassPermissions]", SlashCommandType.UI_STATE, "[default|acceptEdits|plan|bypassPermissions]", false, BuiltinSlashCommands::permission));
         registry.register(command("/status", List.of("/st"), "显示当前运行状态", "/status", SlashCommandType.LOCAL, "", false, BuiltinSlashCommands::status));
