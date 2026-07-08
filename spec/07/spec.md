@@ -1,4 +1,4 @@
-﻿# LunaCode 上下文管理 Spec
+# LunaCode 上下文管理 Spec
 
 ## 背景
 

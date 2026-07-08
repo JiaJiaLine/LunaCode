@@ -26,6 +26,7 @@ class BuiltinSlashCommandsTest {
                 "/session", "/sess",
                 "/memory", "/mem",
                 "/worktree", "/wt",
+                "/team", "/tm",
                 "/permission", "/perm", "/permissions",
                 "/status", "/st",
                 "/review", "/r",
@@ -33,7 +34,7 @@ class BuiltinSlashCommandsTest {
         )) {
             assertNotNull(registry.require(name));
         }
-        assertEquals(12, registry.visibleCommands().size());
+        assertEquals(13, registry.visibleCommands().size());
     }
 
     @Test

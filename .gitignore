@@ -6,7 +6,5 @@ target/
 .vscode/
 config.yaml
 toolTest/
-.lunacode/tmp/
-.lunacode/worktrees/
-.lunacode/worktree_state.json
-.lunacode/worktree_session.json
+.lunacode/
+SkillTest/

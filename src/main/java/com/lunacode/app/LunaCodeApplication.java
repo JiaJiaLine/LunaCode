@@ -3,66 +3,26 @@ package com.lunacode.app;
 import com.lunacode.background.DefaultBackgroundTaskManager;
 import com.lunacode.background.DefaultForegroundSubAgentTracker;
 import com.lunacode.background.TaskNotificationFormatter;
-import com.lunacode.command.BuiltinSlashCommands;
-import com.lunacode.command.SlashCommandRegistry;
+import com.lunacode.command.DefaultTeamCommandHandler;
 import com.lunacode.config.ConfigLoader;
+import com.lunacode.config.DefaultFeatureGateService;
+import com.lunacode.config.FeatureGateService;
 import com.lunacode.config.ProviderConfig;
+import com.lunacode.conversation.ConversationManager;
 import com.lunacode.conversation.DefaultConversationManager;
-import com.lunacode.hook.CommandHookActionExecutor;
-import com.lunacode.hook.DefaultHookActionExecutor;
-import com.lunacode.hook.DefaultHookRuntime;
-import com.lunacode.hook.FileHookLogWriter;
-import com.lunacode.hook.HookConditionEvaluator;
-import com.lunacode.hook.HookConfig;
-import com.lunacode.hook.HookConfigException;
-import com.lunacode.hook.HookConfigLoader;
-import com.lunacode.hook.HookContext;
-import com.lunacode.hook.HookEventName;
-import com.lunacode.hook.HookExecutionScope;
-import com.lunacode.hook.HookRuntime;
-import com.lunacode.hook.HttpHookActionExecutor;
-import com.lunacode.hook.InMemoryHookOnceTracker;
-import com.lunacode.hook.InMemoryHookReminderStore;
+import com.lunacode.coordinator.DefaultCoordinatorModeResolver;
 import com.lunacode.hook.NoOpHookRuntime;
-import com.lunacode.hook.PromptHookActionExecutor;
-import com.lunacode.hook.ShellCommandRunner;
-import com.lunacode.hook.RealSubAgentHookActionExecutor;
-import com.lunacode.instructions.DefaultProjectInstructionLoader;
 import com.lunacode.interaction.BlockingUserQuestionBroker;
 import com.lunacode.mcp.McpClientManager;
 import com.lunacode.mcp.McpDiscoveryResult;
-import com.lunacode.memory.DefaultAutoMemoryUpdater;
-import com.lunacode.memory.DefaultMemoryContextLoader;
-import com.lunacode.memory.MarkdownMemoryStore;
-import com.lunacode.memory.MemoryCommandHandler;
-import com.lunacode.memory.MemoryRuntimeState;
-import com.lunacode.memory.ProviderMemoryModelClient;
 import com.lunacode.orchestrator.DefaultChatOrchestrator;
 import com.lunacode.permission.DefaultPathSandbox;
 import com.lunacode.permission.PathSandbox;
 import com.lunacode.permission.SandboxRoot;
-import com.lunacode.prompt.EnvironmentContextCollector;
-import com.lunacode.prompt.MessageChannelBuilder;
 import com.lunacode.prompt.PromptContextBuilder;
-import com.lunacode.prompt.StaticSystemPromptBuilder;
-import com.lunacode.prompt.SystemReminderBuilder;
 import com.lunacode.provider.ChatProvider;
 import com.lunacode.provider.ChatProviderFactory;
-import com.lunacode.session.DefaultSessionService;
-import com.lunacode.session.JsonlSessionStore;
-import com.lunacode.session.SessionBackedConversationManager;
-import com.lunacode.session.SessionCommandHandler;
-import com.lunacode.session.SessionRecoveryResult;
-import com.lunacode.skill.BuiltinSkillSource;
-import com.lunacode.skill.DefaultSkillCatalog;
-import com.lunacode.skill.DefaultSkillInvocationPlanner;
-import com.lunacode.skill.DefaultSkillPromptContextLoader;
-import com.lunacode.skill.FileSystemSkillSource;
-import com.lunacode.skill.FrontmatterSkillParser;
-import com.lunacode.skill.SkillCatalog;
-import com.lunacode.skill.SkillDiagnostic;
 import com.lunacode.subagent.AgentDefinitionCatalog;
-import com.lunacode.subagent.AgentDefinitionDiagnostic;
 import com.lunacode.subagent.BuiltinAgentDefinitionSource;
 import com.lunacode.subagent.DefaultAgentDefinitionCatalog;
 import com.lunacode.subagent.DefaultSubAgentRunnerFactory;
@@ -71,6 +31,17 @@ import com.lunacode.subagent.FileSystemAgentDefinitionSource;
 import com.lunacode.subagent.FrontmatterAgentDefinitionParser;
 import com.lunacode.subagent.PluginAgentDefinitionSource;
 import com.lunacode.subagent.SubAgentService;
+import com.lunacode.team.DefaultTeamManager;
+import com.lunacode.team.JsonTeamStore;
+import com.lunacode.team.TeamManager;
+import com.lunacode.team.TeamPaths;
+import com.lunacode.team.tool.SendMessageTool;
+import com.lunacode.team.tool.TaskCreateTool;
+import com.lunacode.team.tool.TaskGetTool;
+import com.lunacode.team.tool.TaskListTool;
+import com.lunacode.team.tool.TaskUpdateTool;
+import com.lunacode.team.tool.TeamCreateTool;
+import com.lunacode.team.tool.TeamDeleteTool;
 import com.lunacode.tool.AgentTool;
 import com.lunacode.tool.AskUserQuestionTool;
 import com.lunacode.tool.BashTool;
@@ -82,7 +53,6 @@ import com.lunacode.tool.DirectCommandSandbox;
 import com.lunacode.tool.EditFileTool;
 import com.lunacode.tool.GlobTool;
 import com.lunacode.tool.GrepTool;
-import com.lunacode.tool.LoadSkillTool;
 import com.lunacode.tool.McpToolWrapper;
 import com.lunacode.tool.ReadFileTool;
 import com.lunacode.tool.SensitiveValueMasker;
@@ -91,14 +61,15 @@ import com.lunacode.tool.ToolExecutionContext;
 import com.lunacode.tool.ToolSearchTool;
 import com.lunacode.tool.WorkspacePathResolver;
 import com.lunacode.tool.WriteFileTool;
+import com.lunacode.tui.LanternaLunaTui;
 import com.lunacode.worktree.DefaultWorktreeCommandHandler;
 import com.lunacode.worktree.DefaultWorktreeEnvironmentInitializer;
 import com.lunacode.worktree.DefaultWorktreeManager;
 import com.lunacode.worktree.ProcessGitWorktreeClient;
 import com.lunacode.worktree.WorktreeCommandHandler;
 import com.lunacode.worktree.WorktreeManager;
-import com.lunacode.tui.LanternaLunaTui;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -120,18 +91,7 @@ public class LunaCodeApplication {
             return;
         }
 
-        Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
-        Path userHome = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
-        JsonlSessionStore sessionStore = new JsonlSessionStore(workspaceRoot);
-        DefaultSessionService sessionService = new DefaultSessionService(sessionStore, config.context());
-        SessionBackedConversationManager conversationManager = new SessionBackedConversationManager(new DefaultConversationManager(), sessionService);
-        SessionRecoveryResult recoveryResult = sessionService.restoreLatestOrCreate();
-        conversationManager.restoreHistory(recoveryResult.messages());
-
-        MarkdownMemoryStore memoryStore = new MarkdownMemoryStore(workspaceRoot);
-        DefaultMemoryContextLoader memoryContextLoader = new DefaultMemoryContextLoader(memoryStore);
-        MemoryRuntimeState memoryRuntimeState = new MemoryRuntimeState(config.memory().autoUpdate());
-
+        ConversationManager conversationManager = new DefaultConversationManager();
         ChatProvider provider;
         try {
             provider = new ChatProviderFactory().create(config.protocol());
@@ -140,8 +100,11 @@ public class LunaCodeApplication {
             return;
         }
 
-        PathSandbox pathSandbox;
+        Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
+        Path userHome = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
+        FeatureGateService featureGateService = new DefaultFeatureGateService(config);
         List<SandboxRoot> sandboxRoots;
+        PathSandbox pathSandbox;
         try {
             sandboxRoots = buildSandboxRoots(workspaceRoot, userHome, config.sandbox());
             pathSandbox = new DefaultPathSandbox(workspaceRoot, sandboxRoots);
@@ -149,6 +112,20 @@ public class LunaCodeApplication {
             System.err.println("沙箱配置无效: " + e.getMessage());
             return;
         }
+
+        ProcessGitWorktreeClient gitWorktreeClient = new ProcessGitWorktreeClient();
+        WorktreeManager worktreeManager = new DefaultWorktreeManager(
+                workspaceRoot,
+                gitWorktreeClient,
+                new DefaultWorktreeEnvironmentInitializer(gitWorktreeClient)
+        );
+        WorktreeCommandHandler worktreeCommandHandler = new DefaultWorktreeCommandHandler(worktreeManager);
+        TeamManager teamManager = new DefaultTeamManager(
+                new JsonTeamStore(new TeamPaths(userHome, workspaceRoot)),
+                worktreeManager,
+                featureGateService
+        );
+
         WorkspacePathResolver resolver = new WorkspacePathResolver(workspaceRoot, pathSandbox);
         AtomicReference<SubAgentService> subAgentServiceRef = new AtomicReference<>();
         DefaultToolRegistry registry = new DefaultToolRegistry();
@@ -159,23 +136,15 @@ public class LunaCodeApplication {
         registry.register(new GlobTool(resolver));
         registry.register(new GrepTool(resolver));
         registry.register(new AskUserQuestionTool());
-        registry.register(new ToolSearchTool(registry));
         registry.register(new AgentTool(subAgentServiceRef::get));
-
-        SlashCommandRegistry builtinCommandProbe = new SlashCommandRegistry();
-        BuiltinSlashCommands.registerAll(builtinCommandProbe);
-        SkillCatalog skillCatalog = new DefaultSkillCatalog(
-                List.of(new BuiltinSkillSource(), FileSystemSkillSource.user(), FileSystemSkillSource.project()),
-                new FrontmatterSkillParser(),
-                workspaceRoot,
-                userHome,
-                builtinCommandProbe::builtinCommandNames,
-                () -> registry.getEnabledTools().stream()
-                        .map(Tool::name)
-                        .collect(Collectors.toCollection(LinkedHashSet::new))
-        );
-        DefaultSkillInvocationPlanner skillPlanner = new DefaultSkillInvocationPlanner(skillCatalog);
-        registry.register(new LoadSkillTool(skillPlanner));
+        registry.register(new TeamCreateTool(teamManager));
+        registry.register(new TeamDeleteTool(teamManager));
+        registry.register(new TaskCreateTool(teamManager));
+        registry.register(new TaskGetTool(teamManager));
+        registry.register(new TaskListTool(teamManager));
+        registry.register(new TaskUpdateTool(teamManager));
+        registry.register(new SendMessageTool(teamManager));
+        registry.register(new ToolSearchTool(registry));
 
         SensitiveValueMasker masker = new SensitiveValueMasker();
         masker.add(config.apiKey());
@@ -204,60 +173,8 @@ public class LunaCodeApplication {
                 config.sandbox(),
                 sandboxRoots
         );
-        DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);        ProcessGitWorktreeClient gitWorktreeClient = new ProcessGitWorktreeClient();
-        WorktreeManager worktreeManager = new DefaultWorktreeManager(
-                workspaceRoot,
-                gitWorktreeClient,
-                new DefaultWorktreeEnvironmentInitializer(gitWorktreeClient)
-        );
-        WorktreeCommandHandler worktreeCommandHandler = new DefaultWorktreeCommandHandler(worktreeManager);
-
-        InMemoryHookReminderStore hookReminderStore = new InMemoryHookReminderStore();
-        HookRuntime hookRuntime;
-        try {
-            HookConfig hookConfig = new HookConfigLoader().load(workspaceRoot, userHome);
-            hookRuntime = hookConfig.isEmpty()
-                    ? NoOpHookRuntime.instance()
-                    : new DefaultHookRuntime(
-                            hookConfig,
-                            new HookConditionEvaluator(),
-                            new DefaultHookActionExecutor(
-                                    new CommandHookActionExecutor(new ShellCommandRunner(), toolContext),
-                                    new PromptHookActionExecutor(),
-                                    new HttpHookActionExecutor(),
-                                    new RealSubAgentHookActionExecutor(subAgentServiceRef::get)
-                            ),
-                            new InMemoryHookOnceTracker(),
-                            hookReminderStore,
-                            new FileHookLogWriter(workspaceRoot, masker)
-                    );
-        } catch (HookConfigException e) {
-            System.err.println(e.getMessage());
-            return;
-        }
-
-        AtomicReference<LanternaLunaTui> tuiRef = new AtomicReference<>();
-        Runnable requestRender = () -> {
-            LanternaLunaTui tui = tuiRef.get();
-            if (tui != null) {
-                tui.requestRender();
-            }
-        };
-        DefaultAutoMemoryUpdater autoMemoryUpdater = new DefaultAutoMemoryUpdater(
-                new ProviderMemoryModelClient(provider, config),
-                memoryStore,
-                memoryRuntimeState,
-                requestRender
-        );
-        MemoryCommandHandler memoryCommandHandler = new MemoryCommandHandler(memoryStore, memoryContextLoader, memoryRuntimeState);
-        PromptContextBuilder promptContextBuilder = new PromptContextBuilder(
-                new StaticSystemPromptBuilder(),
-                new EnvironmentContextCollector(),
-                new MessageChannelBuilder(new SystemReminderBuilder(), hookReminderStore, () -> sessionService.currentSession().id()),
-                new DefaultProjectInstructionLoader(),
-                memoryContextLoader,
-                new DefaultSkillPromptContextLoader(skillCatalog)
-        );
+        DefaultToolExecutor toolExecutor = new DefaultToolExecutor(registry, toolContext);
+        PromptContextBuilder promptContextBuilder = new PromptContextBuilder();
 
         AgentDefinitionCatalog agentDefinitionCatalog = new DefaultAgentDefinitionCatalog(
                 List.of(new PluginAgentDefinitionSource(), new BuiltinAgentDefinitionSource(config.agent()), FileSystemAgentDefinitionSource.user(), FileSystemAgentDefinitionSource.project()),
@@ -269,15 +186,14 @@ public class LunaCodeApplication {
                         .collect(Collectors.toCollection(LinkedHashSet::new)),
                 config.agent()
         );
-        printAgentDiagnostics(agentDefinitionCatalog);
         DefaultSubAgentRunnerFactory subAgentRunnerFactory = new DefaultSubAgentRunnerFactory(
                 provider,
                 config,
                 registry,
                 toolExecutor,
                 promptContextBuilder,
-                hookRuntime,
-                () -> sessionService.currentSession().id()
+                NoOpHookRuntime.instance(),
+                () -> ""
         );
         subAgentRunnerFactory.configureWorktreeManager(worktreeManager);
         DefaultBackgroundTaskManager backgroundTaskManager = new DefaultBackgroundTaskManager(subAgentRunnerFactory);
@@ -288,9 +204,12 @@ public class LunaCodeApplication {
                 backgroundTaskManager,
                 foregroundSubAgentTracker,
                 config,
-                worktreeManager
+                worktreeManager,
+                teamManager
         );
         subAgentServiceRef.set(subAgentService);
+
+        AtomicReference<LanternaLunaTui> tuiRef = new AtomicReference<>();
         DefaultChatOrchestrator orchestrator = new DefaultChatOrchestrator(
                 conversationManager,
                 provider,
@@ -298,53 +217,35 @@ public class LunaCodeApplication {
                 registry,
                 toolExecutor,
                 questionBroker,
-                new SessionCommandHandler(sessionService, conversationManager),
-                memoryCommandHandler,
-                autoMemoryUpdater,
-                memoryRuntimeState,
-                () -> sessionService.currentSession().id(),
-                memoryContextLoader::loadForPrompt,
-                promptContextBuilder,
-                hookRuntime,
-                requestRender
+                () -> {
+                    LanternaLunaTui tui = tuiRef.get();
+                    if (tui != null) {
+                        tui.requestRender();
+                    }
+                }
         );
         orchestrator.configureWorktrees(worktreeManager, worktreeCommandHandler);
-        orchestrator.configureSkills(skillCatalog, skillPlanner, null);
+        orchestrator.configureTeams(teamManager, new DefaultTeamCommandHandler(teamManager, () -> ""), new DefaultCoordinatorModeResolver(featureGateService));
         orchestrator.configureBackgroundTasks(backgroundTaskManager, foregroundSubAgentTracker, new TaskNotificationFormatter());
-        HookExecutionScope applicationHookScope = new HookExecutionScope(sessionService.currentSession().id(), 0, workspaceRoot);
-        hookRuntime.emit(HookEventName.STARTUP, HookContext.empty(HookEventName.STARTUP), applicationHookScope);
-        hookRuntime.emit(HookEventName.SESSION_START, HookContext.empty(HookEventName.SESSION_START), applicationHookScope);
-        printSkillDiagnostics(skillCatalog);
 
         LanternaLunaTui tui = new LanternaLunaTui(conversationManager, orchestrator);
-        orchestrator.setCommandUiController(tui);
         tuiRef.set(tui);
         try {
             tui.start();
         } finally {
-            hookRuntime.emit(HookEventName.SESSION_END, HookContext.empty(HookEventName.SESSION_END), applicationHookScope);
-            hookRuntime.emit(HookEventName.SHUTDOWN, HookContext.empty(HookEventName.SHUTDOWN), applicationHookScope);
-            hookRuntime.close();
             mcpManager.closeAsync().join();
         }
     }
 
-    private void printAgentDiagnostics(AgentDefinitionCatalog catalog) {
-        if (catalog == null) {
-            return;
+    static List<SandboxRoot> buildSandboxRoots(Path workspaceRoot, Path userHome, com.lunacode.config.SandboxConfig config) {
+        List<SandboxRoot> roots = new ArrayList<>(SandboxRoot.build(workspaceRoot, config));
+        Path userSkillRoot = userHome == null ? null : userHome.resolve(".lunacode").resolve("skills");
+        if (userSkillRoot != null && Files.isDirectory(userSkillRoot)) {
+            roots.add(SandboxRoot.readOnly("user-skills", userSkillRoot, "/roots/user-skills"));
         }
-        for (AgentDefinitionDiagnostic diagnostic : catalog.diagnostics()) {
-            System.err.println("Agent " + diagnostic.level() + " [" + diagnostic.sourceId() + "]: " + diagnostic.message());
-        }
+        return Collections.unmodifiableList(roots);
     }
-    private void printSkillDiagnostics(SkillCatalog skillCatalog) {
-        if (skillCatalog == null) {
-            return;
-        }
-        for (SkillDiagnostic diagnostic : skillCatalog.diagnostics()) {
-            System.err.println("Skill " + diagnostic.level() + " [" + diagnostic.sourceId() + "]: " + diagnostic.message());
-        }
-    }
+
     private Set<String> reservedToolNames(DefaultToolRegistry registry) {
         return registry.getEnabledTools().stream()
                 .map(Tool::name)
@@ -353,14 +254,5 @@ public class LunaCodeApplication {
 
     private boolean isLinux() {
         return System.getProperty("os.name", "").toLowerCase().contains("linux");
-    }
-
-    static List<SandboxRoot> buildSandboxRoots(Path workspaceRoot, Path userHome, com.lunacode.config.SandboxConfig config) {
-        List<SandboxRoot> roots = new ArrayList<>(SandboxRoot.build(workspaceRoot, config));
-        Path userSkillRoot = userHome == null ? null : userHome.resolve(".lunacode").resolve("skills");
-        if (userSkillRoot != null && java.nio.file.Files.isDirectory(userSkillRoot)) {
-            roots.add(SandboxRoot.readOnly("user-skills", userSkillRoot, "/roots/user-skills"));
-        }
-        return Collections.unmodifiableList(roots);
     }
 }
