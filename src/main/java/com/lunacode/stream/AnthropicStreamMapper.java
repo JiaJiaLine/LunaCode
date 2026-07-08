@@ -73,7 +73,12 @@ public class AnthropicStreamMapper {
         if (buffer == null) {
             return List.of(new StreamEvent.ContentBlockStop(index));
         }
-        JsonNode input = buffer.json().isBlank() ? mapper.createObjectNode() : mapper.readTree(buffer.json());
+        JsonNode input;
+        try {
+            input = buffer.json().isBlank() ? mapper.createObjectNode() : mapper.readTree(buffer.json());
+        } catch (Exception ignored) {
+            input = mapper.createObjectNode();
+        }
         return List.of(new StreamEvent.ToolUse(buffer.id(), buffer.name(), input), new StreamEvent.ContentBlockStop(index));
     }
 

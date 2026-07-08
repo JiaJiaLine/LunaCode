@@ -30,13 +30,16 @@ class ClaudeToolUseStreamMapperTest {
     }
 
     @Test
-    void invalidJsonProducesError() {
+    void invalidToolInputJsonFallsBackToEmptyObject() {
         AnthropicStreamMapper mapper = new AnthropicStreamMapper();
         mapper.map(new SseEvent("content_block_start", "{\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"ReadFile\"}}"));
         mapper.map(new SseEvent("content_block_delta", "{\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\"}}"));
 
         StreamEvent event = mapper.map(new SseEvent("content_block_stop", "{\"index\":0}")).get(0);
 
-        assertInstanceOf(StreamEvent.Error.class, event);
+        StreamEvent.ToolUse toolUse = assertInstanceOf(StreamEvent.ToolUse.class, event);
+        assertEquals("ReadFile", toolUse.name());
+        assertTrue(toolUse.input().isObject());
+        assertEquals(0, toolUse.input().size());
     }
 }

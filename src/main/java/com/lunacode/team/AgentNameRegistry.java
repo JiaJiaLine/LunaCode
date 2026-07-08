@@ -42,6 +42,18 @@ public record AgentNameRegistry(Map<String, String> names) {
         return new AgentNameRegistry(copy);
     }
 
+    public AgentNameRegistry rebind(String name, String agentId) {
+        TeamNameValidator validator = new TeamNameValidator();
+        String safeName = validator.validate(name, "agentName");
+        String safeAgentId = agentId == null ? "" : agentId.strip();
+        if (safeAgentId.isBlank()) {
+            throw new IllegalArgumentException("agentId must not be blank");
+        }
+        Map<String, String> copy = new LinkedHashMap<>(names);
+        copy.put(safeName, safeAgentId);
+        return new AgentNameRegistry(copy);
+    }
+
     public Optional<String> resolveName(String target) {
         String safeTarget = target == null ? "" : target.strip();
         if (safeTarget.isBlank()) {

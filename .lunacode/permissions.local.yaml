@@ -51,3 +51,24 @@
 
 - rule: "Bash(dir F:\\LunaCode\\SkillTest\\tooltest\\notexist*)"
   effect: allow
+
+- rule: "SendMessage({\"team\":\"demo\",\"to\":\"bob\",\"message\":\"bob，报告你的当前状态。\",\"summary\":\"ping bob 确认状态\"})"
+  effect: allow
+
+- rule: "SendMessage({\"team\":\"demo\",\"to\":\"bob\",\"summary\":\"Bob在线吗 确认一下\",\"message\":\"Bob，我是 Lead LunaCode。你在线吗？请回复确认。\"})"
+  effect: allow
+
+- rule: "SendMessage({\"team\":\"demo\",\"to\":\"bob\",\"summary\":\"Bob please confirm you are online and ready\",\"message\":\"Bob，我是 Lead LunaCode。你在线吗？请回复确认。\"})"
+  effect: allow
+
+- rule: "TeamDelete({\"team\":\"demo\",\"force\":true})"
+  effect: allow
+
+- rule: "TeamCreate({\"name\":\"demo\"})"
+  effect: allow
+
+- rule: "SendMessage({\"team\":\"demo\",\"to\":\"alice_luna\",\"summary\":\"Alice confirm your status online now\",\"message\":\"Alice，我是 Lead LunaCode。请回复确认你在线。\"})"
+  effect: allow
+
+- rule: "SendMessage({\"team\":\"demo\",\"to\":\"bob_developer\",\"summary\":\"Bob confirm your status online now\",\"message\":\"Bob，我是 Lead LunaCode。请回复确认你在线。\"})"
+  effect: allow

@@ -7,16 +7,20 @@ import java.security.NoSuchAlgorithmException;
 
 public final class TeamPaths {
     private final Path root;
+    private final Path legacyRoot;
     private final Path repoRoot;
     private final TeamNameValidator validator = new TeamNameValidator();
 
     public TeamPaths(Path userHome, Path repoRoot) {
         Path safeUserHome = userHome == null ? Path.of(System.getProperty("user.home")) : userHome;
-        this.root = safeUserHome.toAbsolutePath().normalize()
+        this.repoRoot = (repoRoot == null ? Path.of(".") : repoRoot).toAbsolutePath().normalize();
+        this.root = this.repoRoot
+                .resolve(".lunacode")
+                .resolve("teams");
+        this.legacyRoot = safeUserHome.toAbsolutePath().normalize()
                 .resolve(".lunacode")
                 .resolve("teams")
                 .resolve(repoId(repoRoot));
-        this.repoRoot = (repoRoot == null ? Path.of(".") : repoRoot).toAbsolutePath().normalize();
     }
 
     public Path repoRoot() {
@@ -25,6 +29,10 @@ public final class TeamPaths {
 
     public Path root() {
         return root;
+    }
+
+    public Path legacyRoot() {
+        return legacyRoot;
     }
 
     public Path currentTeamFile() {

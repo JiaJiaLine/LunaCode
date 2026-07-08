@@ -32,6 +32,7 @@ public final class JsonTeamStore implements TeamStore {
     public JsonTeamStore(TeamPaths paths, ObjectMapper mapper) {
         this.paths = paths;
         this.mapper = mapper == null ? new ObjectMapper() : mapper;
+        migrateLegacyRoot();
     }
 
     @Override
@@ -168,6 +169,32 @@ public final class JsonTeamStore implements TeamStore {
             return safeRegistry;
         } catch (IOException e) {
             throw new IllegalStateException("failed to save agent name registry: " + safeName, e);
+        }
+    }
+
+    private void migrateLegacyRoot() {
+        Path legacyRoot = paths.legacyRoot();
+        Path root = paths.root();
+        if (legacyRoot == null || legacyRoot.equals(root) || !Files.isDirectory(legacyRoot)) {
+            return;
+        }
+        try (var stream = Files.walk(legacyRoot)) {
+            List<Path> sources = stream.toList();
+            for (Path source : sources) {
+                Path relative = legacyRoot.relativize(source);
+                Path target = root.resolve(relative).normalize();
+                if (!target.startsWith(root)) {
+                    throw new IllegalStateException("legacy team path escapes managed root");
+                }
+                if (Files.isDirectory(source)) {
+                    Files.createDirectories(target);
+                } else if (!Files.exists(target)) {
+                    Files.createDirectories(target.getParent());
+                    Files.copy(source, target);
+                }
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("failed to migrate legacy teams: " + legacyRoot, e);
         }
     }
 
