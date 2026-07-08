@@ -88,8 +88,12 @@ public final class DefaultTeamManager implements TeamManager {
                 ? currentTeam().orElseThrow(() -> new IllegalStateException("no current team"))
                 : requiredTeam(request.teamName());
         String memberName = validator.validate(request.name(), "memberName");
-        if (team.members().containsKey(memberName)) {
-            throw new IllegalArgumentException("team member already exists: " + memberName);
+        TeamMemberRecord existing = team.members().get(memberName);
+        if (existing != null) {
+            if (existing.status() == TeamMemberStatus.RUNNING) {
+                throw new IllegalArgumentException("team member is already running: " + memberName);
+            }
+            return existing;
         }
         if (request.backend() == TeamMemberBackendKind.TERMINAL) {
             throw new IllegalStateException("terminal backend is not available in this build; no fallback was used");
@@ -122,8 +126,10 @@ public final class DefaultTeamManager implements TeamManager {
         }
         TeamRecord updated = team.withMember(member);
         store.save(updated);
-        AgentNameRegistry registry = store.loadRegistry(team.name()).register(member.name(), member.agentId());
-        store.saveRegistry(team.name(), registry);
+        if (request.agentId().isPresent()) {
+            AgentNameRegistry registry = store.loadRegistry(team.name()).register(member.name(), member.agentId());
+            store.saveRegistry(team.name(), registry);
+        }
         return member;
     }
 
@@ -133,7 +139,7 @@ public final class DefaultTeamManager implements TeamManager {
         TeamMemberRecord existing = requiredMember(team, memberName);
         TeamMemberRecord updatedMember = existing.withAgentId(agentId);
         store.save(team.withMember(updatedMember));
-        store.saveRegistry(team.name(), store.loadRegistry(team.name()).register(updatedMember.name(), updatedMember.agentId()));
+        store.saveRegistry(team.name(), store.loadRegistry(team.name()).rebind(updatedMember.name(), updatedMember.agentId()));
         return updatedMember;
     }
 

@@ -44,18 +44,29 @@ class PermissionModePolicyTest {
         assertEquals(PermissionEvaluation.Decision.ALLOW, policy.decide(PermissionMode.DEFAULT, AgentMode.PLAN, tool("AskUserQuestion", true, false)));
     }
 
-    private Tool tool(String name, boolean readOnly, boolean destructive) {
-        return new StubTool(name, readOnly, destructive);
+    @Test
+    void defaultAllowsNonDestructiveTeamToolsButAsksForTeamDelete() {
+        assertEquals(PermissionEvaluation.Decision.ALLOW, policy.decide(PermissionMode.DEFAULT, AgentMode.DEFAULT, tool("SendMessage", false, false, "team")));
+        assertEquals(PermissionEvaluation.Decision.ALLOW, policy.decide(PermissionMode.DEFAULT, AgentMode.DEFAULT, tool("TeamCreate", false, false, "team")));
+        assertEquals(PermissionEvaluation.Decision.ASK, policy.decide(PermissionMode.DEFAULT, AgentMode.DEFAULT, tool("TeamDelete", false, true, "team")));
     }
 
-    private record StubTool(String name, boolean readOnly, boolean destructive) implements Tool {
+    private Tool tool(String name, boolean readOnly, boolean destructive) {
+        return tool(name, readOnly, destructive, "test");
+    }
+
+    private Tool tool(String name, boolean readOnly, boolean destructive, String category) {
+        return new StubTool(name, readOnly, destructive, category);
+    }
+
+    private record StubTool(String name, boolean readOnly, boolean destructive, String category) implements Tool {
         @Override public String description() { return "stub"; }
         @Override public JsonNode inputSchema() { return new ObjectMapper().createObjectNode(); }
         @Override public ToolResult execute(ToolExecutionContext context, JsonNode input) { return ToolResult.success("ok", Map.of()); }
         @Override public boolean isReadOnly() { return readOnly; }
         @Override public boolean isDestructive() { return destructive; }
         @Override public boolean isConcurrencySafe(JsonNode input) { return true; }
-        @Override public String category() { return "test"; }
+        @Override public String category() { return category; }
         @Override public ValidationError validateInput(JsonNode input) { return null; }
     }
 }

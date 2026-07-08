@@ -11,6 +11,9 @@ public final class PermissionModePolicy {
         if ("AskUserQuestion".equals(tool.name())) {
             return agentMode == AgentMode.PLAN ? PermissionEvaluation.Decision.ALLOW : PermissionEvaluation.Decision.DENY;
         }
+        if ("team".equals(tool.category()) && !tool.isDestructive()) {
+            return PermissionEvaluation.Decision.ALLOW;
+        }
         PermissionMode mode = permissionMode == null ? PermissionMode.DEFAULT : permissionMode;
         return switch (mode) {
             case DEFAULT, PLAN -> defaultDecision(tool);

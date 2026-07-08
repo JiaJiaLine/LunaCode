@@ -55,6 +55,21 @@ class AnthropicStreamMapperTest {
         assertInstanceOf(StreamEvent.Error.class, event);
     }
 
+    @Test
+    void malformedToolInputJsonFallsBackToEmptyObject() {
+        AnthropicStreamMapper mapper = new AnthropicStreamMapper();
+        mapper.map(new SseEvent("content_block_start", "{\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool-1\",\"name\":\"SendMessage\"}}"));
+        mapper.map(new SseEvent("content_block_delta", "{\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{bad\"}}"));
+
+        List<StreamEvent> events = mapper.map(new SseEvent("content_block_stop", "{\"index\":0}"));
+
+        assertEquals(2, events.size());
+        StreamEvent.ToolUse toolUse = (StreamEvent.ToolUse) events.get(0);
+        assertEquals("SendMessage", toolUse.name());
+        assertTrue(toolUse.input().isObject());
+        assertEquals(0, toolUse.input().size());
+    }
+
     private StreamEvent only(List<StreamEvent> events) {
         assertEquals(1, events.size());
         return events.get(0);

@@ -22,6 +22,12 @@ import com.lunacode.permission.SandboxRoot;
 import com.lunacode.prompt.PromptContextBuilder;
 import com.lunacode.provider.ChatProvider;
 import com.lunacode.provider.ChatProviderFactory;
+import com.lunacode.session.DefaultSessionService;
+import com.lunacode.session.JsonlSessionStore;
+import com.lunacode.session.SessionBackedConversationManager;
+import com.lunacode.session.SessionCommandHandler;
+import com.lunacode.session.SessionRecoveryResult;
+import com.lunacode.session.SessionService;
 import com.lunacode.subagent.AgentDefinitionCatalog;
 import com.lunacode.subagent.BuiltinAgentDefinitionSource;
 import com.lunacode.subagent.DefaultAgentDefinitionCatalog;
@@ -91,7 +97,6 @@ public class LunaCodeApplication {
             return;
         }
 
-        ConversationManager conversationManager = new DefaultConversationManager();
         ChatProvider provider;
         try {
             provider = new ChatProviderFactory().create(config.protocol());
@@ -102,6 +107,12 @@ public class LunaCodeApplication {
 
         Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
         Path userHome = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize();
+        SessionService sessionService = new DefaultSessionService(new JsonlSessionStore(workspaceRoot), config.context());
+        SessionBackedConversationManager conversationManager = new SessionBackedConversationManager(new DefaultConversationManager(), sessionService);
+        SessionRecoveryResult sessionRecovery = sessionService.restoreLatestOrCreate();
+        conversationManager.restoreHistory(sessionRecovery.messages());
+        sessionRecovery.warnings().forEach(System.err::println);
+        SessionCommandHandler sessionCommandHandler = new SessionCommandHandler(sessionService, conversationManager);
         FeatureGateService featureGateService = new DefaultFeatureGateService(config);
         List<SandboxRoot> sandboxRoots;
         PathSandbox pathSandbox;
@@ -217,6 +228,13 @@ public class LunaCodeApplication {
                 registry,
                 toolExecutor,
                 questionBroker,
+                sessionCommandHandler,
+                null,
+                null,
+                null,
+                () -> sessionService.currentSession().id(),
+                null,
+                promptContextBuilder,
                 () -> {
                     LanternaLunaTui tui = tuiRef.get();
                     if (tui != null) {
