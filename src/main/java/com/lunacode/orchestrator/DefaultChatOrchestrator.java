@@ -2,6 +2,8 @@ package com.lunacode.orchestrator;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.lunacode.background.BackgroundTaskManager;
+import com.lunacode.background.BackgroundTaskSnapshot;
+import com.lunacode.background.BackgroundTaskStatus;
 import com.lunacode.background.ForegroundSubAgentTracker;
 import com.lunacode.background.TaskNotificationFormatter;
 import com.lunacode.agent.AgentLoop;
@@ -93,10 +95,12 @@ import com.lunacode.worktree.WorktreeManager;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -117,6 +121,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private final AtomicReference<StatusSnapshot> status;
     private final AtomicReference<CancellationToken> currentToken = new AtomicReference<>();
     private final AtomicReference<PermissionMode> pendingModeSwitch = new AtomicReference<>();
+    private final List<AgentEventSink> agentEventObservers = new CopyOnWriteArrayList<>();
     private final AgentLoop agentLoop;
     private final BlockingUserQuestionBroker questionBroker;
     private final BlockingPermissionConfirmationBroker permissionBroker;
@@ -143,6 +148,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     private volatile AgentMode agentMode = AgentMode.DEFAULT;
     private volatile PermissionMode permissionModeBeforePlan;
     private volatile boolean planPermissionManuallyChanged;
+    private volatile BackgroundTaskManager backgroundTaskManager;
     private volatile ForegroundSubAgentTracker foregroundSubAgentTracker;
     private volatile WorktreeManager worktreeManager;
     private volatile WorktreeCommandHandler worktreeCommandHandler;
@@ -570,6 +576,7 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     }
 
     public void configureBackgroundTasks(BackgroundTaskManager manager, ForegroundSubAgentTracker tracker, TaskNotificationFormatter formatter) {
+        this.backgroundTaskManager = manager;
         this.foregroundSubAgentTracker = tracker;
         TaskNotificationFormatter safeFormatter = formatter == null ? new TaskNotificationFormatter() : formatter;
         if (manager != null) {
@@ -777,6 +784,16 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     }
 
     @Override
+    public AutoCloseable observeAgentEvents(AgentEventSink observer) {
+        if (observer == null) {
+            return () -> {
+            };
+        }
+        agentEventObservers.add(observer);
+        return () -> agentEventObservers.remove(observer);
+    }
+
+    @Override
     public void emit(AgentEvent event) {
         if (event instanceof AgentEvent.UsageUpdated usageUpdated) {
             TokenUsage usage = usageUpdated.cumulativeUsage();
@@ -785,53 +802,69 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         } else if (event instanceof AgentEvent.ToolUseStarted toolUseStarted) {
             if ("AskUserQuestion".equals(toolUseStarted.toolName())) {
                 String question = toolUseStarted.input().path("question").asText("Waiting for user answer");
-                setStatus("waiting_user", question, toolUseStarted.toolName(), summarize(toolUseStarted.input().toString()));
+                updateStatus("waiting_user", question, toolUseStarted.toolName(), summarize(toolUseStarted.input().toString()));
             } else {
                 String summary = toolRunningSummary(toolUseStarted.toolName(), toolUseStarted.input());
-                setStatus("tool_running", summary, toolUseStarted.toolName(), summary);
+                updateStatus("tool_running", summary, toolUseStarted.toolName(), summary);
             }
         } else if (event instanceof AgentEvent.PermissionRequested permissionRequested) {
-            setStatus("waiting_permission", permissionRequested.prompt(), permissionRequested.toolName(), permissionRequested.prompt());
+            updateStatus("waiting_permission", permissionRequested.prompt(), permissionRequested.toolName(), permissionRequested.prompt());
+        } else if (event instanceof AgentEvent.PermissionAllowed permissionAllowed) {
+            String summary = "正在执行 " + permissionAllowed.toolName();
+            updateStatus("tool_running", null, permissionAllowed.toolName(), summary);
+        } else if (event instanceof AgentEvent.PermissionDenied permissionDenied) {
+            updateStatus("tool_error", permissionDenied.reason(), permissionDenied.toolName(), permissionDenied.reason());
         } else if (event instanceof AgentEvent.PermissionModeChanged permissionModeChanged) {
             permissionModeSession.setCurrentMode(permissionModeChanged.mode());
-            setStatus("idle", "权限模式已切换为 " + permissionModeChanged.mode().configValue());
+            updateStatus("idle", "权限模式已切换为 " + permissionModeChanged.mode().configValue());
         } else if (event instanceof AgentEvent.PermissionRuleWarning warning) {
-            setStatus("warning", warning.message());
+            updateStatus("warning", warning.message());
         } else if (event instanceof AgentEvent.ToolResultReady toolResultReady) {
             String state = toolResultReady.result().isError() ? "tool_error" : "tool_done";
             String summary = summarize(toolResultReady.result().content()) + " (" + toolResultReady.duration().toMillis() + "ms)";
-            setStatus(state, toolResultReady.result().isError() ? toolResultReady.result().content() : null, toolResultReady.toolName(), summary);
+            updateStatus(state, toolResultReady.result().isError() ? toolResultReady.result().content() : null, toolResultReady.toolName(), summary);
         } else if (event instanceof AgentEvent.CompactionStarted compactionStarted) {
-            setStatus("compacting", "Luna 正在压缩上下文，估算 token=" + compactionStarted.estimatedTokensBefore());
+            updateStatus("compacting", "Luna 正在压缩上下文，估算 token=" + compactionStarted.estimatedTokensBefore());
         } else if (event instanceof AgentEvent.CompactionCompleted compactionCompleted) {
-            setStatus("responding", "上下文压缩完成：覆盖消息 " + compactionCompleted.summarizedMessages()
+            updateStatus("responding", "上下文压缩完成：覆盖消息 " + compactionCompleted.summarizedMessages()
                     + " 条，外置工具结果 " + compactionCompleted.externalizedToolResults()
                     + " 个，恢复文件 " + compactionCompleted.restoredFiles() + " 个");
         } else if (event instanceof AgentEvent.CompactionFailed compactionFailed) {
-            setStatus("warning", compactionFailed.reason());
+            updateStatus("warning", compactionFailed.reason());
         } else if (event instanceof AgentEvent.TurnComplete turnComplete) {
-            setStatus("responding", "turn=" + turnComplete.turnIndex());
+            updateStatus("responding", "turn=" + turnComplete.turnIndex());
         } else if (event instanceof AgentEvent.LoopComplete) {
             StatusSnapshot old = status.get();
             boolean cancelled = currentToken.get() != null && currentToken.get().isCancellationRequested();
             if (cancelled) {
-                setStatus("cancelled", "Cancelled by user");
+                updateStatus("cancelled", "Cancelled by user");
             } else if ("error".equals(old.state()) || "tool_error".equals(old.state())) {
                 status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), old.state(), old.errorSummary(), old.toolName(), old.toolSummary(), agentMode, permissionModeSession.currentMode()));
             } else {
-                setStatus("idle", null);
-                triggerAutoMemoryUpdate();
+                updateStatus("idle", null);
+                triggerAutoMemoryUpdate(false);
             }
         } else if (event instanceof AgentEvent.ErrorOccurred errorOccurred) {
             boolean cancelled = currentToken.get() != null && currentToken.get().isCancellationRequested();
-            setStatus(cancelled ? "cancelled" : "error", errorOccurred.message());
+            updateStatus(cancelled ? "cancelled" : "error", errorOccurred.message());
         } else if (event instanceof AgentEvent.StreamText) {
             StatusSnapshot old = status.get();
             if (!"responding".equals(old.state())) {
                 status.set(new StatusSnapshot(config.protocol(), config.model(), old.inputTokens(), old.outputTokens(), "responding", null, old.toolName(), old.toolSummary(), agentMode, permissionModeSession.currentMode()));
             }
         }
+        notifyAgentEventObservers(event);
         onChange.run();
+    }
+
+    private void notifyAgentEventObservers(AgentEvent event) {
+        for (AgentEventSink observer : agentEventObservers) {
+            try {
+                observer.emit(event);
+            } catch (RuntimeException ignored) {
+                // 展示观察者异常不能影响 Agent Loop、状态更新或其他观察者。
+            }
+        }
     }
 
     private void handleCompactCommand() {
@@ -909,13 +942,21 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     }
 
     private void setStatus(String state, String errorSummary) {
-        status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), state, errorSummary, null, null, agentMode, permissionModeSession.currentMode()));
+        updateStatus(state, errorSummary);
         onChange.run();
     }
 
     private void setStatus(String state, String errorSummary, String toolName, String toolSummary) {
-        status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), state, errorSummary, toolName, toolSummary, agentMode, permissionModeSession.currentMode()));
+        updateStatus(state, errorSummary, toolName, toolSummary);
         onChange.run();
+    }
+
+    private void updateStatus(String state, String errorSummary) {
+        status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), state, errorSummary, null, null, agentMode, permissionModeSession.currentMode()));
+    }
+
+    private void updateStatus(String state, String errorSummary, String toolName, String toolSummary) {
+        status.set(new StatusSnapshot(config.protocol(), config.model(), tokens().inputTokens(), tokens().outputTokens(), state, errorSummary, toolName, toolSummary, agentMode, permissionModeSession.currentMode()));
     }
 
     private int fullSnapshotSize() {
@@ -926,6 +967,10 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
     }
 
     private void triggerAutoMemoryUpdate() {
+        triggerAutoMemoryUpdate(true);
+    }
+
+    private void triggerAutoMemoryUpdate(boolean notifyChange) {
         if (autoMemoryUpdater == null) {
             return;
         }
@@ -941,7 +986,9 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
             return;
         }
         autoMemoryUpdater.updateAsync(new MemoryUpdateRequest(currentSessionId(), delta, currentMemoryIndex(), Instant.now()));
-        onChange.run();
+        if (notifyChange) {
+            onChange.run();
+        }
     }
 
     private MemoryIndexSnapshot currentMemoryIndex() {
@@ -972,7 +1019,42 @@ public class DefaultChatOrchestrator implements ChatOrchestrator, AgentEventSink
         if (snapshot == null) {
             return null;
         }
-        return snapshot.withSessionAndMemory(shortSessionId(), memoryAutoUpdateEnabled(), memoryLatestState());
+        return snapshot
+                .withSessionAndMemory(shortSessionId(), memoryAutoUpdateEnabled(), memoryLatestState())
+                .withBackgroundActivities(backgroundActivities());
+    }
+
+    private List<BackgroundActivitySnapshot> backgroundActivities() {
+        BackgroundTaskManager manager = backgroundTaskManager;
+        if (manager == null) {
+            return List.of();
+        }
+        try {
+            List<BackgroundTaskSnapshot> snapshots = manager.list();
+            if (snapshots == null || snapshots.isEmpty()) {
+                return List.of();
+            }
+            return snapshots.stream()
+                    .filter(Objects::nonNull)
+                    .filter(snapshot -> snapshot.status() == BackgroundTaskStatus.RUNNING)
+                    .map(snapshot -> new BackgroundActivitySnapshot(
+                            snapshot.id(),
+                            backgroundActivitySummary(snapshot),
+                            snapshot.startTime()
+                    ))
+                    .sorted(Comparator.comparing(BackgroundActivitySnapshot::startedAt))
+                    .toList();
+        } catch (RuntimeException ignored) {
+            return List.of();
+        }
+    }
+
+    private String backgroundActivitySummary(BackgroundTaskSnapshot snapshot) {
+        String recentActivity = snapshot.recentActivity();
+        if (recentActivity != null && !recentActivity.isBlank()) {
+            return compact(recentActivity, "后台任务运行中");
+        }
+        return compact(snapshot.task(), "后台任务运行中");
     }
 
     private String shortSessionId() {
