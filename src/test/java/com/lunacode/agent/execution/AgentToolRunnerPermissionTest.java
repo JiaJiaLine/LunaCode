@@ -63,16 +63,20 @@ class AgentToolRunnerPermissionTest {
                 request -> PermissionConfirmationAnswer.ALLOW_ALWAYS,
                 store
         );
+        List<AgentEvent> events = new java.util.ArrayList<>();
 
         List<ToolExecutionRecord> records = runner.executeToolBatches(
                 List.of(new ToolUse("toolu_1", "WriteFile", mapper.createObjectNode().put("path", "a.txt"))),
                 config(),
                 new CancellationToken(),
-                event -> {}
+                events::add
         );
 
         assertEquals("WriteFile(a.txt)", appended.get());
         assertFalse(records.get(0).result().isError());
+        assertTrue(events.get(0) instanceof AgentEvent.PermissionRequested);
+        assertTrue(events.get(1) instanceof AgentEvent.PermissionAllowed);
+        assertTrue(events.get(2) instanceof AgentEvent.ToolResultReady);
     }
 
     @Test
@@ -86,16 +90,20 @@ class AgentToolRunnerPermissionTest {
                 new AskingGateway("WriteFile(a.txt)"),
                 request -> PermissionConfirmationAnswer.DENY
         );
+        List<AgentEvent> events = new java.util.ArrayList<>();
 
         List<ToolExecutionRecord> records = runner.executeToolBatches(
                 List.of(new ToolUse("toolu_1", "WriteFile", mapper.createObjectNode().put("path", "a.txt"))),
                 config(),
                 new CancellationToken(),
-                event -> {}
+                events::add
         );
 
         assertTrue(records.get(0).result().isError());
         assertEquals("permission_denied", records.get(0).result().metadata().get("errorType"));
+        assertTrue(events.get(0) instanceof AgentEvent.PermissionRequested);
+        assertTrue(events.get(1) instanceof AgentEvent.PermissionDenied);
+        assertTrue(events.get(2) instanceof AgentEvent.ToolResultReady);
     }
 
     @Test

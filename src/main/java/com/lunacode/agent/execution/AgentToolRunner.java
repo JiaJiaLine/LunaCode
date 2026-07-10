@@ -303,7 +303,7 @@ public final class AgentToolRunner {
         emitHook(HookEventName.PERMISSION_REQUEST, hookContext(HookEventName.PERMISSION_REQUEST, toolUse, null, prompt), scope);
         emit(sink, new AgentEvent.PermissionRequested(toolUse.id(), toolUse.name(), prompt));
         try {
-            return confirmationBroker.confirm(new PermissionConfirmationRequest(
+            PermissionConfirmationAnswer answer = confirmationBroker.confirm(new PermissionConfirmationRequest(
                     toolUse.id(),
                     toolUse.name(),
                     prompt,
@@ -312,7 +312,26 @@ public final class AgentToolRunner {
                     evaluation.reason(),
                     evaluation.suggestedAllowRule()
             ));
+            if (answer == PermissionConfirmationAnswer.DENY) {
+                emit(sink, new AgentEvent.PermissionDenied(
+                        toolUse.id(),
+                        toolUse.name(),
+                        "用户拒绝了本次工具调用"
+                ));
+            } else {
+                emit(sink, new AgentEvent.PermissionAllowed(
+                        toolUse.id(),
+                        toolUse.name(),
+                        answer == PermissionConfirmationAnswer.ALLOW_ALWAYS ? "始终允许" : "允许本次"
+                ));
+            }
+            return answer;
         } catch (RuntimeException e) {
+            emit(sink, new AgentEvent.PermissionDenied(
+                    toolUse.id(),
+                    toolUse.name(),
+                    "权限确认失败"
+            ));
             return PermissionConfirmationAnswer.DENY;
         }
     }
